@@ -1,0 +1,13 @@
+# デフォルト設定
+BasedOnStyle: LLVM
+# インデント幅
+IndentWidth: 2
+# 言語
+Language: Cpp
+Standard: Auto
+# 1行あたりの
+ColumnLimit: 80
+# 改行コード
+UseCRLF: false
+# 個別の設定項目を以下似追加
+# AccessModifierOffset: -4
