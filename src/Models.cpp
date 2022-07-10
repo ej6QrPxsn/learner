@@ -71,11 +71,11 @@ R2D2Agent::forwardLstm(torch::Tensor x, torch::Tensor prevAction, torch::Tensor 
   // std::cout << "prevReward: " << prevReward.sizes() << std::endl;
   // std::cout << "prevAction_one_hot: " << prevAction_one_hot.sizes() << std::endl;
 
-  // batch, (burn_in + )seq, conv outputs + reward + actions
-  std::cout << "lstm x " << x.sizes() << std::endl;
-  std::cout << "lstm prevReward " << prevReward.sizes() << std::endl;
-  std::cout << "lstm prevActionOneHot " << prevActionOneHot.sizes() << std::endl;
+  // std::cout << "lstm x " << x.sizes() << std::endl;
+  // std::cout << "lstm prevReward " << prevReward.sizes() << std::endl;
+  // std::cout << "lstm prevActionOneHot " << prevActionOneHot.sizes() << std::endl;
 
+  // batch, (burn_in + )seq, conv outputs + reward + actions
   auto lstmInputs = torch::cat({x, prevReward, prevActionOneHot}, 2);
 
   // std::cout << "lstm_inputs: " << lstm_inputs.sizes() << std::endl;
@@ -119,50 +119,3 @@ torch::Tensor R2D2Agent::forwardDueling(torch::Tensor x)
   return adv + stv;
 }
 
-// int main(void)
-// {
-//   int batchSize = 32;
-//   int SEQ_SIZE = 120;
-//   int ACTION = 9;
-
-//   // Create a new Net.
-//   auto net = std::make_shared<R2D2Agent>(1, ACTION);
-//   // auto forward(torch::Tensor x, torch::Tensor prevAction, torch::Tensor prevReward, torch::Tensor ih, torch::Tensor hh, bool burn_in)
-
-//   auto state = torch::randint(255, {batchSize, SEQ_SIZE, 1, 84, 84}, torch::TensorOptions().dtype(torch::kUInt8));
-//   auto prevAction = torch::randint(ACTION, {batchSize, SEQ_SIZE}, torch::TensorOptions().dtype(torch::kUInt8));
-//   auto prevReward = torch::rand({batchSize, SEQ_SIZE, 1}, torch::TensorOptions().dtype(torch::kFloat32));
-//   auto ih = torch::rand({batchSize, SEQ_SIZE, 1, 512}, torch::TensorOptions().dtype(torch::kFloat32));
-//   auto hh = torch::rand({batchSize, SEQ_SIZE, 1, 512}, torch::TensorOptions().dtype(torch::kFloat32));
-//   bool burn_in = true;
-
-//   // std::cout << "state: " << state << std::endl;
-//   // std::cout << "prevAction: " << prevAction << std::endl;
-//   // std::cout << "prevRewardte: " << prevReward << std::endl;
-//   // std::cout << "ih: " << ih.index({Slice (), 1}).sizes() << std::endl;
-//   // std::cout << "hh: " << hh.index({Slice (), 1}).sizes() << std::endl;
-
-//   // Instantiate an SGD optimization algorithm to update our Net's parameters.
-//   torch::optim::SGD optimizer(net->parameters(), /*lr=*/0.01);
-
-//   auto ret = net->forward(state / 255.0, prevAction.to(torch::kLong), prevReward,
-//   ih.index({Slice (), 1}),
-//   hh.index({Slice (), 1}),
-//   burn_in);
-//   auto losses = std::get<0>(ret);
-//   auto lstm_states = std::get<1>(ret);
-//   auto in_ih = std::get<0>(lstm_states);
-//   auto in_hh = std::get<1>(lstm_states);
-
-//   // std::cout << "in_q: " << in_q << std::endl;
-//   // std::cout << "in_ih: " << in_ih << std::endl;
-//   // std::cout << "in_hh: " << in_hh << std::endl;
-
-//   auto loss = torch::sum(losses);
-//   // Compute gradients of the loss w.r.t. the parameters of our model.
-//   loss.backward();
-//   // Update the parameters based on the calculated gradients.
-//   optimizer.step();
-
-//   int a = 1;
-// }

@@ -33,7 +33,6 @@ public:
     std::vector<ReplayData> data_list;
 
     auto segment = tree.total() / n;
-  std::cout << "tree.total(): " << tree.total() << std::endl;
 
     for (auto i = 0; i < n; i++) {
       auto a = segment * i;
@@ -44,17 +43,18 @@ public:
       std::uniform_int_distribution<int> distr(a, b);
 
       auto s = distr(eng);
-  std::cout << "i: " << i << " s: " << s << std::endl;
+      if (s == 0) {
+        s = 1;
+      }
       auto ret = tree.get(s);
       auto index = std::get<0>(ret);
       auto data = std::get<2>(ret);
 
-  std::cout << "data.state.sizes(): " << data.state.sizes() << std::endl;
       assert (data.action.size(0) != 0);
 
       //(idx, p, data)
       idx_list.push_back(index);
-      data_list.push_back(std::move(data));
+      data_list.push_back(data);
     }
 
     return std::move(std::make_tuple(idx_list, data_list));

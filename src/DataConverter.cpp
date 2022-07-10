@@ -12,10 +12,8 @@ TrainData DataConverter::toBatchedTrainData(std::vector<ReplayData> &dataList) {
     train.done.index_put_({i}, dataList[i].done.index({0}));
     train.ih.index_put_({i}, dataList[i].ih.index({0}));
     train.hh.index_put_({i}, dataList[i].hh.index({0}));
-    train.policy.index_put_({i}, dataList[i].policy.index({0}));
+    train.policy.index_put_({i}, dataList[i].policy.index({0, Slice(), 0}));
   }
-  std::cout << "train.state " << train.state.sizes() << std::endl;
-  std::cout << "train.ih " << train.ih.sizes() << std::endl;
 
   train.ih.requires_grad();
   train.hh.requires_grad();

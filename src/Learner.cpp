@@ -230,13 +230,13 @@ void Learner::trainLoop() {
     auto indexes = std::get<0>(sample);
     auto data = std::get<1>(sample);
 
-    std::cout << "state " << data.state.sizes() << ", " << data.state.dtype() << std::endl;
-    std::cout << "action " << data.action.sizes() << ", " << data.action.dtype() << std::endl;
-    std::cout << "reward " << data.reward.sizes() << ", " << data.reward.dtype() << std::endl;
-    std::cout << "done " << data.done.sizes() << ", " << data.done.dtype() << std::endl;
-    std::cout << "ih " << data.ih.sizes() << ", " << data.ih.dtype() << std::endl;
-    std::cout << "hh " << data.hh.sizes() << ", " << data.hh.dtype() << std::endl;
-    std::cout << "policy " << data.policy.sizes() << ", " << data.policy.dtype() << std::endl;
+    // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype() << std::endl;
+    // std::cout << "action " << data.action.sizes() << ", " << data.action.dtype() << std::endl;
+    // std::cout << "reward " << data.reward.sizes() << ", " << data.reward.dtype() << std::endl;
+    // std::cout << "done " << data.done.sizes() << ", " << data.done.dtype() << std::endl;
+    // std::cout << "ih " << data.ih.sizes() << ", " << data.ih.dtype() << std::endl;
+    // std::cout << "hh " << data.hh.sizes() << ", " << data.hh.dtype() << std::endl;
+    // std::cout << "policy " << data.policy.sizes() << ", " << data.policy.dtype() << std::endl;
 
     agent.onlineNet.forward(
         data.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
@@ -261,8 +261,8 @@ void Learner::trainLoop() {
         data.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)}));
 
     auto retraceRet = retraceLoss(
-        data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        data.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}).unsqueeze(2),
+        data.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}).squeeze(-1),
         data.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         data.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         std::get<0>(onlineRet), std::get<0>(targetRet));
@@ -295,13 +295,9 @@ int main(void) {
       torch::zeros({1, 84, 84}, torch::TensorOptions().dtype(torch::kUInt8));
   int actionSize = 9;
   int numEnvs = 16;
-  int traceLength = 80;
-  int replayPeriod = 40;
-  int returnSize = 32;
-  int capacity = 25000;
 
-  Learner learner(actionSize, stateTensor, numEnvs, traceLength, replayPeriod,
-                  returnSize, capacity);
+  Learner learner(stateTensor, actionSize, numEnvs, TRACE_LENGTH, REPLAY_PERIOD,
+                  RETURN_TRANSITION_SIZE, REPLAY_BUFFER_SIZE);
 
   // actorからのリクエスト受付
   auto inferLoop = std::thread(&Learner::listenActor, &learner);

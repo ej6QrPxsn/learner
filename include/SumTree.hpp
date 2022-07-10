@@ -44,11 +44,9 @@ public:
 
   std::tuple<int, float, ReplayData> get(float s)
   {
-    std::cout << "---------------------- " << s << std::endl;
-std::cout << "tree.size(): " << tree.size() << std::endl;
     auto idx = retrieve(0, s);
     auto dataIdx = idx - capacity + 1;
-    return std::make_tuple(idx, tree[idx], std::move(data[dataIdx]));
+    return std::make_tuple(idx, tree[idx], data[dataIdx]);
   }
 
 private:
@@ -69,11 +67,8 @@ private:
     auto left = 2 * idx + 1;
     auto right = left + 1;
 
- std::cout<< "idx: " << idx << ", s: " << s << ", left: " << left << ", right: " << right << std::endl;
- std::cout<< "tree[left]: " << tree[left] << std::endl;
     if (left >= tree.size())
     {
-std::cout << "left >= tree.size()" << std::endl;
       return idx;
     }
 

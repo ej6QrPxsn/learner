@@ -63,8 +63,6 @@ struct RequestManager {
     taskList.push_back(task);
 
     if (taskList.size() == inferBatchSize) {
-      // if(std::find(taskList.begin(), taskList.end(), 4) != taskList.end())
-        // std::cout << "addTask " << taskList << std::endl;
       std::copy(taskList.begin(), taskList.end(), std::back_inserter(*tasks));
       taskList.clear();
     }

@@ -18,7 +18,7 @@ struct TrainData {
     done = torch::empty({batchSize, seqLength, 1}, torch::kBool);
     ih = torch::empty({batchSize, 1, 512}, torch::kFloat32);
     hh = torch::empty({batchSize, 1, 512}, torch::kFloat32);
-    policy = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
+    policy = torch::empty({batchSize, seqLength}, torch::kFloat32);
   }
 
   torch::Tensor state;
@@ -59,7 +59,6 @@ struct Transition : ReplayData {
   Transition() {}
   Transition(torch::Tensor state_, int batchSize, int seqLength, int actionSize)
       : ReplayData(state_, batchSize, seqLength) {
-    std::cout << "Transition state " << "state.state: " << state.sizes() << std::endl;
     ih = torch::empty({batchSize, seqLength, 1, 512}, torch::kFloat32);
     hh = torch::empty({batchSize, seqLength, 1, 512}, torch::kFloat32);
     q = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);

@@ -87,9 +87,11 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
       torch::sum(
           h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})), 2);
 
+  // std::cout << "reward.index({Slice(), Slice(None, -1)}): " << reward.index({Slice(), Slice(None, -1)}).sizes() << std::endl;
+  // std::cout << "nextTargetQValue: " << nextTargetQValue.sizes() << std::endl;
+  // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes() << std::endl;
   auto td = reward.index({Slice(), Slice(None, -1)}) + nextTargetQValue -
             currentTargetQValue;
-  // std::cout << "nextTargetQValue: " << nextTargetQValue.sizes() << std::endl;
   // std::cout << "td: " << td.sizes() << std::endl;
 
   // retrace coefficients
@@ -117,6 +119,8 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   auto retraceOperator = h(h_1(currentTargetQValue) + retraceOperatorSigma);
   // std::cout << "retraceOperator: " << retraceOperator.sizes() << std::endl;
 
+  // std::cout << "onlineQ: " << onlineQ.sizes() << std::endl;
+  // std::cout << "action: " << action.sizes() << std::endl;
   // t時点のオンラインネットのアクションのQ値
   // batch, seq, actions
   auto qValue = onlineQ.index({Slice(), Slice(None, -1)})

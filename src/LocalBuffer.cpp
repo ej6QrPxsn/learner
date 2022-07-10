@@ -110,12 +110,12 @@ LocalBuffer::updateAndGetTransitions(
         replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
 
         if (transitions[envId].action.size(0) == 0) {
-          std::cout << "state: " << transitions[envId].state.sizes() << std::endl;
-          std::cout << "action: " << transitions[envId].action.sizes() << std::endl;
-          std::cout << "reward: " << transitions[envId].reward.sizes() << std::endl;
-          std::cout << "done: " << transitions[envId].done.sizes() << std::endl;
-          std::cout << "policy: " << transitions[envId].policy.sizes() << std::endl;
-          std::cout << "q: " << transitions[envId].q.sizes() << std::endl;
+          // std::cout << "state: " << transitions[envId].state.sizes() << std::endl;
+          // std::cout << "action: " << transitions[envId].action.sizes() << std::endl;
+          // std::cout << "reward: " << transitions[envId].reward.sizes() << std::endl;
+          // std::cout << "done: " << transitions[envId].done.sizes() << std::endl;
+          // std::cout << "policy: " << transitions[envId].policy.sizes() << std::endl;
+          // std::cout << "q: " << transitions[envId].q.sizes() << std::endl;
 
           assert(transitions[envId].action.size(0) != 0);
           assert(replayData.action.size(0) != 0);

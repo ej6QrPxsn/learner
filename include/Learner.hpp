@@ -12,7 +12,7 @@ const auto INVALID_ACTION = 99;
 
 class Learner {
 public:
-  Learner(int actionSize, torch::Tensor state_, int numEnvs_, int traceLength,
+  Learner(torch::Tensor state_, int actionSize, int numEnvs_, int traceLength,
           int replayPeriod, int returnSize, int capacity)
       : numEnvs(numEnvs_), inferBatchSize(std::floor(numEnvs_ / 2)),
         agent(actionSize), state(state_),
