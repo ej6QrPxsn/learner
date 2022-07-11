@@ -17,14 +17,14 @@ public:
       : numEnvs(numEnvs_), inferBatchSize(std::floor(numEnvs_ / 2)),
         agent(actionSize), state(state_),
         reqManager(numEnvs, inferBatchSize, state_),
-        localBuffer(state_, actionSize, numEnvs, traceLength,
-                    replayPeriod, returnSize),
+        localBuffer(state_, actionSize, numEnvs, traceLength, replayPeriod,
+                    returnSize),
         dataConverter(state_, actionSize, 1 + replayPeriod + traceLength),
         replay(dataConverter, capacity), actions(numEnvs, INVALID_ACTION) {}
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(std::vector<int> & envIds);
+  void inference(std::vector<int> &envIds);
   Replay *getReplay() { return &replay; }
   void trainLoop();
 

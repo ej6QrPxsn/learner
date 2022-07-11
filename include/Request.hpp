@@ -11,28 +11,25 @@ struct Event {
   bool notify = false;
   std::mutex mtx;
   std::condition_variable cv;
-  int waitCount = 0;
 
   void wait() {
     {
       std::unique_lock<std::mutex> lk(mtx);
-      waitCount++;
       cv.wait(lk, [&] { return notify; });
-      if (--waitCount == 0) {
-        notify = false;
-      }
     }
-  }
-
-  bool isReady() {
-    return waitCount == 0;
   }
 
   void set() {
     std::lock_guard<std::mutex> lk(mtx);
     // 共有データの更新
     notify = true;
-    cv.notify_all();
+    cv.notify_one();
+  }
+
+  void reset() {
+    std::lock_guard<std::mutex> lk(mtx);
+    // 共有データの更新
+    notify = false;
   }
 };
 
@@ -48,7 +45,7 @@ struct RequestManager {
   std::vector<int> taskList;
   std::vector<Request> requests;
   std::mutex taskMtx;
-  std::mutex eventMtx;
+  std::vector<Event *> events;
   int inferBatchSize;
   int currentAction;
 
@@ -56,9 +53,12 @@ struct RequestManager {
       : inferBatchSize(inferBatchSize_), currentAction(0),
         requests(numEnvs, Request(state, 0, 0)) {
     int count = numEnvs / inferBatchSize + 2;
+    for (int i = 0; i < numEnvs; i++) {
+      events.push_back(new Event());
+    }
   }
 
-  void addTask(int task, std::vector<int> * tasks) {
+  void addTask(int task, std::vector<int> *tasks) {
     std::lock_guard<std::mutex> lock(taskMtx);
     taskList.push_back(task);
 
