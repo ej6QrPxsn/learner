@@ -3,10 +3,13 @@
 
 auto const TARGET_UPDATE = 2500;
 auto const BATCH_SIZE = 32;
+auto const LEARNING_RATE = 1e-4;
 
 auto const REPLAY_PERIOD = 40;
 const auto TRACE_LENGTH = 80;
 const auto SEQ_LENGTH = 1 + REPLAY_PERIOD + TRACE_LENGTH;
+
+const auto MAX_REPLAY_QUEUE_SIZE = 128;
 const auto REPLAY_BUFFER_ADD_PRINT_SIZE = 500;
 const auto REPLAY_BUFFER_SIZE = 25000;
 const auto REPLAY_BUFFER_MIN_SIZE = 2500;

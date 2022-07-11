@@ -31,19 +31,20 @@ public:
               int _traceLength, int _replayPeriod, int _returnSize)
       : replayPeriod(_replayPeriod), actionSize(_actionSize),
         seqLength(1 + replayPeriod + _traceLength), returnSize(_returnSize),
+        state(_state),
         transitions(numEnvs, Transition(_state, 1, seqLength, actionSize)),
         indexes(numEnvs, 0),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
-  void setInferenceParam(std::vector<int> & envIds,
-                                      InferenceData *inferData,
-                                      std::vector<Request> &requests);
+  void setInferenceParam(std::vector<int> &envIds, InferenceData *inferData,
+                         std::vector<Request> &requests);
   std::tuple<std::vector<ReplayData>, std::vector<RetraceQ>>
-  updateAndGetTransitions(std::vector<int> & envIds, std::vector<Request> & requests,
-                          torch::Tensor &action,
+  updateAndGetTransitions(std::vector<int> &envIds,
+                          std::vector<Request> &requests, torch::Tensor &action,
                           std::tuple<torch::Tensor, torch::Tensor> &lstmStates,
                           torch::Tensor &q, torch::Tensor &policy);
+  void reset();
 
 private:
   const int replayPeriod;
@@ -51,9 +52,12 @@ private:
   const int seqLength;
   const int returnSize;
 
+  torch::Tensor state;
   std::vector<Transition> transitions;
-  std::vector<ReplayData> returnReplays;
-  std::vector<RetraceQ> returnQs;
+  std::vector<ReplayData> replayList;
+  std::vector<RetraceQ> qList;
+  std::vector<ReplayData> emptyReplays;
+  std::vector<RetraceQ> emptyQs;
   std::vector<int> indexes;
   std::vector<torch::Tensor> prevIh;
   std::vector<torch::Tensor> prevHh;

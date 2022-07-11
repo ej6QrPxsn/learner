@@ -3,8 +3,9 @@
 
 using namespace torch::indexing;
 
-void LocalBuffer::setInferenceParam(std::vector<int> & envIds, InferenceData * inferData,
-                                              std::vector<Request> & requests) {
+void LocalBuffer::setInferenceParam(std::vector<int> &envIds,
+                                    InferenceData *inferData,
+                                    std::vector<Request> &requests) {
   int64_t size = envIds.size();
 
   for (int i = 0; i < size; i++) {
@@ -25,13 +26,13 @@ void LocalBuffer::setInferenceParam(std::vector<int> & envIds, InferenceData * i
 
 std::tuple<std::vector<ReplayData>, std::vector<RetraceQ>>
 LocalBuffer::updateAndGetTransitions(
-    std::vector<int> & envIds, std::vector<Request> & requests, torch::Tensor &action,
-    std::tuple<torch::Tensor, torch::Tensor> &lstmStates, torch::Tensor &q,
-    torch::Tensor &policy) {
+    std::vector<int> &envIds, std::vector<Request> &requests,
+    torch::Tensor &action, std::tuple<torch::Tensor, torch::Tensor> &lstmStates,
+    torch::Tensor &q, torch::Tensor &policy) {
   auto ih = std::get<0>(lstmStates).permute({1, 0, 2});
   auto hh = std::get<1>(lstmStates).permute({1, 0, 2});
 
-    assert(action.size(0) != 0);
+  assert(action.size(0) != 0);
   for (int i = 0; i < envIds.size(); i++) {
     auto envId = envIds[i];
     auto index = indexes[envId];
@@ -44,19 +45,17 @@ LocalBuffer::updateAndGetTransitions(
     transitions[envId].q.index_put_({0, index}, q.index({i}));
     transitions[envId].policy.index_put_({0, index}, policy.index({i}));
 
-    prevIh[envId] = ih.index({i});
-    prevHh[envId] = hh.index({i});
-
     index++;
 
     if (index == seqLength || requests[envId].done) {
       if (requests[envId].done) {
-        prevIh[index].index_put_({0}, 0);
-        prevIh[index].index_put_({0}, 0);
+        prevIh[envId].index_put_({Slice()}, 0);
+        prevIh[envId].index_put_({Slice()}, 0);
 
         if (index > replayPeriod + 1) {
-          ReplayData replayData(transitions[envId].state, 1, seqLength);
+          ReplayData replayData(state, 1, seqLength);
           RetraceQ retraceData(1, seqLength, actionSize);
+
           // 現在位置までコピー
           replayData.state.index_put_(
               {0, Slice(None, index)},
@@ -76,10 +75,10 @@ LocalBuffer::updateAndGetTransitions(
           retraceData.onlineQ.index_put_(
               {0, Slice(None, index)},
               transitions[envId].q.index({0, Slice(None, index)}));
-          
+
           // lstm状態はシークなし
-        replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
-        replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
+          replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
+          replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
 
           // 現在地以降は0
           replayData.state.index_put_({0, Slice(index, None)}, 0);
@@ -91,12 +90,12 @@ LocalBuffer::updateAndGetTransitions(
 
           assert(replayData.action.size(0) != 0);
 
-          returnReplays.push_back(std::move(replayData));
-          returnQs.push_back(std::move(retraceData));
+          replayList.push_back(std::move(replayData));
+          qList.push_back(std::move(retraceData));
         }
         index = 0;
       } else {
-        ReplayData replayData(transitions[envId].state, 1, seqLength);
+        ReplayData replayData(state, 1, seqLength);
         RetraceQ retraceData(1, seqLength, actionSize);
         replayData.state = transitions[envId].state.clone();
         replayData.action = transitions[envId].action.clone();
@@ -105,17 +104,19 @@ LocalBuffer::updateAndGetTransitions(
         replayData.policy = transitions[envId].policy.clone();
         retraceData.onlineQ = transitions[envId].q.clone();
 
-       // lstm状態はシークなし
+        // lstm状態はシークなし
         replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
         replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
 
         if (transitions[envId].action.size(0) == 0) {
-          // std::cout << "state: " << transitions[envId].state.sizes() << std::endl;
-          // std::cout << "action: " << transitions[envId].action.sizes() << std::endl;
-          // std::cout << "reward: " << transitions[envId].reward.sizes() << std::endl;
-          // std::cout << "done: " << transitions[envId].done.sizes() << std::endl;
-          // std::cout << "policy: " << transitions[envId].policy.sizes() << std::endl;
-          // std::cout << "q: " << transitions[envId].q.sizes() << std::endl;
+          // std::cout << "state: " << transitions[envId].state.sizes() <<
+          // std::endl; std::cout << "action: " <<
+          // transitions[envId].action.sizes() << std::endl; std::cout <<
+          // "reward: " << transitions[envId].reward.sizes() << std::endl;
+          // std::cout << "done: " << transitions[envId].done.sizes() <<
+          // std::endl; std::cout << "policy: " <<
+          // transitions[envId].policy.sizes() << std::endl; std::cout << "q: "
+          // << transitions[envId].q.sizes() << std::endl;
 
           assert(transitions[envId].action.size(0) != 0);
           assert(replayData.action.size(0) != 0);
@@ -123,8 +124,8 @@ LocalBuffer::updateAndGetTransitions(
         assert(transitions[envId].action.size(0) != 0);
         assert(replayData.action.size(0) != 0);
 
-        returnReplays.push_back(std::move(replayData));
-        returnQs.push_back(std::move(retraceData));
+        replayList.push_back(std::move(replayData));
+        qList.push_back(std::move(retraceData));
 
         index = 1 + replayPeriod;
       }
@@ -133,9 +134,14 @@ LocalBuffer::updateAndGetTransitions(
     indexes[envId] = index;
   }
 
-  if (returnReplays.size() > returnSize) {
-    return std::move(std::make_tuple(returnReplays, returnQs));
+  if (replayList.size() > returnSize) {
+    return {replayList, qList};
   } else {
-    return {std::vector<ReplayData>(), std::vector<RetraceQ>()};
+    return {emptyReplays, emptyQs};
   }
+}
+
+void LocalBuffer::reset() {
+  replayList.clear();
+  qList.clear();
 }

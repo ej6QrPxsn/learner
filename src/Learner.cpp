@@ -133,6 +133,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
 }
 
 int Learner::inference(std::vector<int> & envIds) {
+    // std::cout << "called inference " << envIds << std::endl;
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   //   std::cout << "0 inference " << envIds << std::endl;
   std::vector<Request> &requests = reqManager.requests;
@@ -195,6 +196,9 @@ int Learner::inference(std::vector<int> & envIds) {
   if (replayDatas.size() > 0) {
     auto retraceData = dataConverter.toBatchedRetraceData(
         replayDatas, std::get<1>(transitions));
+    
+    localBuffer.reset();
+
     auto priorities = std::get<1>(retraceLoss(
         retraceData.action, retraceData.reward, retraceData.done,
         retraceData.policy, retraceData.onlineQ, retraceData.targetQ));
@@ -223,12 +227,17 @@ int Learner::inference(std::vector<int> & envIds) {
 void Learner::trainLoop() {
   int stepsDone = 0;
 
-  torch::optim::Adam optimizer(agent.onlineNet.parameters(), /*lr=*/0.01);
+  torch::optim::Adam optimizer(agent.onlineNet.parameters(), /*lr=*/LEARNING_RATE);
 
-  while (1) {
+  // auto trainDataLoader = torch::data::make_data_loader(
+  //   ReplayDataset(replay),
+  //   torch::data::DataLoaderOptions().batch_size(1).workers(1)
+  // );
+
+  while(1) {
     auto sample = replay.sample();
-    auto indexes = std::get<0>(sample);
-    auto data = std::get<1>(sample);
+    auto indexes = sample.indexes;
+    auto data = sample.datas;
 
     // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype() << std::endl;
     // std::cout << "action " << data.action.sizes() << ", " << data.action.dtype() << std::endl;
@@ -277,7 +286,7 @@ void Learner::trainLoop() {
     // Update the parameters based on the calculated gradients.
     optimizer.step();
 
-    replay.putPriorityQueue(indexes, priorities);
+    replay.updatePriorities(indexes, priorities);
 
     // ターゲットネットワーク更新
     if (stepsDone % TARGET_UPDATE == 0) {
@@ -286,6 +295,7 @@ void Learner::trainLoop() {
     }
 
     stepsDone++;
+    // std::cout << "stepsDone " << stepsDone << std::endl;
   }
 }
 
@@ -302,13 +312,11 @@ int main(void) {
   // actorからのリクエスト受付
   auto inferLoop = std::thread(&Learner::listenActor, &learner);
 
-  // リプレイループ
-  auto replayLoop = std::thread(&Replay::loop, learner.getReplay());
+  // optimizer = optim.Adam(agent.online_net.parameters(), lr=LEARNING_RATE, eps=1e-3)
 
   learner.trainLoop();
 
   inferLoop.join();
-  replayLoop.join();
 
   return EXIT_SUCCESS;
 }
