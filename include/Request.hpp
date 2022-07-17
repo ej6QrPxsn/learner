@@ -17,10 +17,10 @@ struct Event {
       std::unique_lock<std::mutex> lk(mtx);
       cv.wait(lk, [&] { return notify; });
     }
+    notify = false;
   }
 
   void set() {
-    std::lock_guard<std::mutex> lk(mtx);
     // 共有データの更新
     notify = true;
     cv.notify_one();
@@ -54,17 +54,15 @@ struct RequestManager {
         requests(numEnvs, Request(state, 0, 0)) {
     int count = numEnvs / inferBatchSize + 2;
     for (int i = 0; i < numEnvs; i++) {
-      events.push_back(new Event());
+      events.emplace_back(new Event());
     }
   }
 
   void addTask(int task, std::vector<int> *tasks) {
     std::lock_guard<std::mutex> lock(taskMtx);
-    taskList.push_back(task);
-
+    taskList.emplace_back(task);
     if (taskList.size() == inferBatchSize) {
-      std::copy(taskList.begin(), taskList.end(), std::back_inserter(*tasks));
-      taskList.clear();
+      taskList.swap(*tasks);
     }
   }
 };

@@ -24,7 +24,7 @@ public:
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  void inference(std::vector<int> &envIds);
+  int inference(int envId, std::vector<int> &envIds);
   Replay *getReplay() { return &replay; }
   void trainLoop();
 

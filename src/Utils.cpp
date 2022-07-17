@@ -41,7 +41,7 @@ inline auto getRetraceOperatorSigma(int s, torch::Tensor td,
                                        {Slice(), Slice(s + 1, j + 1)})) *
                                    tdValue;
   // std::cout << "else: " << val.sizes() << std::endl;
-      values.push_back(val);
+      values.emplace_back(val);
     // }
   }
 
@@ -109,7 +109,7 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   // batch, seq <- [batch, 1] * seq
   std::vector<torch::Tensor> sigmaList;
   for (auto s = 0; s < retraceLength; s++) {
-    sigmaList.push_back(
+    sigmaList.emplace_back(
         getRetraceOperatorSigma(s, td, retraceCoefficients, batchSize));
   }
 

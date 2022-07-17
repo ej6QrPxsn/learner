@@ -9,13 +9,6 @@
 #include <mutex>
 #include <random>
 
-struct SampleData {
-  std::vector<int> indexes;
-  TrainData datas;
-
-  SampleData(std::vector<int> i, TrainData d) : indexes(i), datas(d) {}
-};
-
 class ReplayBuffer {
 public:
   ReplayBuffer(int capacity) : tree(SumTree(capacity)), count(0) {}
@@ -25,7 +18,6 @@ public:
   void update(int idx, float p) { tree.update(idx, p); }
 
   void add(float p, ReplayData sample) {
-    assert(sample.action.size(0) != 0);
     tree.add(p, sample);
     count += 1;
     if (count < REPLAY_BUFFER_MIN_SIZE) {
@@ -35,6 +27,10 @@ public:
         std::cout << " elements, waiting for at least "
                   << REPLAY_BUFFER_MIN_SIZE << " elements" << std::endl;
       }
+    } else if (count == REPLAY_BUFFER_MIN_SIZE) {
+        std::cout << "Replay buffer filled up. "
+                  << "It currently has " << count << " elements.";
+        std::cout << " Start training." << std::endl;
     }
   }
 
@@ -60,11 +56,9 @@ public:
       auto index = std::get<0>(ret);
       auto data = std::get<2>(ret);
 
-      assert(data.action.size(0) != 0);
-
       //(idx, p, data)
-      idx_list.push_back(index);
-      data_list.push_back(data);
+      idx_list.emplace_back(index);
+      data_list.emplace_back(data);
     }
 
     return {idx_list, data_list};
@@ -80,9 +74,10 @@ public:
   Replay(DataConverter converter, int capacity)
       : dataConverter(converter), buffer(ReplayBuffer(capacity)) {}
 
-  void updatePriorities(std::vector<int> indexes, torch::Tensor priorities) {
-    for (int i = 0; i < indexes.size(); i++) {
-      buffer.update(indexes[i], priorities.index({i}).item<float>());
+  void updatePriorities(torch::Tensor indexes, torch::Tensor priorities) {
+    for (int i = 0; i < indexes.size(0); i++) {
+      buffer.update(indexes.index({i}).item<int>(),
+                    priorities.index({i}).item<float>());
     }
   }
 
@@ -90,7 +85,7 @@ public:
                              std::vector<ReplayData> data) {
     std::lock_guard<std::mutex> lock(replayMtx);
     if (replayQueue.size() < MAX_REPLAY_QUEUE_SIZE) {
-      replayQueue.push_back(std::make_tuple(priorities, data));
+      replayQueue.emplace_back(std::move(std::make_tuple(priorities, data)));
     }
   }
 
@@ -99,7 +94,7 @@ public:
       std::tuple<torch::Tensor, std::vector<ReplayData>> queueData;
       {
         std::lock_guard<std::mutex> lock(replayMtx);
-        queueData = replayQueue.front();
+        queueData = std::move(replayQueue.front());
         replayQueue.pop_front();
       }
 
@@ -107,21 +102,22 @@ public:
       auto dataList = std::get<1>(queueData);
 
       for (int i = 0; i < dataList.size(); i++) {
-        buffer.add(priorities.index({i}).item<float>(), std::move(dataList[i]));
+        buffer.add(priorities.index({i}).item<float>(), dataList[i]);
       }
-   }
+    }
   }
 
-  SampleData sample() {
+  auto sample() {
     while (buffer.get_count() < REPLAY_BUFFER_MIN_SIZE) {
       replayDataAdd();
     }
 
     replayDataAdd();
+
     auto sample = buffer.sample(BATCH_SIZE);
     auto indexes = std::get<0>(sample);
     auto data = dataConverter.toBatchedTrainData(std::get<1>(sample));
-    return SampleData(indexes, data);
+    return std::make_tuple(indexes, data);
   }
 
   DataConverter dataConverter;
@@ -130,18 +126,31 @@ public:
   std::mutex replayMtx;
 };
 
-struct ReplayDataset
-    : torch::data::datasets::StreamDataset<ReplayDataset,
-                                           std::vector<SampleData>> {
+class ReplayDataset : public torch::data::datasets::Dataset<ReplayDataset> {
+  using Example = torch::data::Example<>;
+
+private:
   Replay &replay;
-  ReplayDataset(Replay &replay_) : replay(replay_) {}
-  std::vector<SampleData> get_batch(size_t batch_size) override {
-    return std::vector<SampleData>({replay.sample()});
+
+public:
+  ReplayDataset(Replay &replay_) : replay(replay_){};
+
+  c10::optional<size_t> size() const override {
+    return c10::optional<size_t>(1);
+  };
+
+  Example get(size_t index) {
+    auto data = replay.sample();
+    return {torch::tensor(std::get<0>(data)), torch::empty({0})};
   }
 
-  torch::optional<size_t> size() const override { return torch::nullopt; }
-
-  size_t counter = 0;
+  std::vector<Example> get_batch(c10::ArrayRef<size_t> indices) override {
+    auto sample = replay.sample();
+    auto data = std::get<1>(sample);
+    return {Example(torch::tensor(std::get<0>(sample)), data.state),
+            Example(data.action, data.reward), Example(data.done, data.ih),
+            Example(data.hh, data.policy)};
+  }
 };
 
 #endif // REPLAY_HPP

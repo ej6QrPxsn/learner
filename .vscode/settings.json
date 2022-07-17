@@ -62,6 +62,11 @@
         "valarray": "cpp",
         "memory_resource": "cpp",
         "regex": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "compare": "cpp",
+        "concepts": "cpp",
+        "numbers": "cpp",
+        "semaphore": "cpp",
+        "stop_token": "cpp"
     }
 }

@@ -74,7 +74,7 @@ int Learner::listenActor() {
 
     auto t = std::thread(&Learner::sendAndRecieveActor, this, fd_other);
 
-    threadList.push_back(std::move(t));
+    threadList.emplace_back(std::move(t));
   }
 
   for (auto i = 0; i < threadList.size(); i++) {
@@ -89,6 +89,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
   uint32_t buf_len = 0;
   char buf[10240];
   std::vector<int> taskList;
+  int action;
 
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
@@ -112,14 +113,13 @@ int Learner::sendAndRecieveActor(int fd_other) {
 
     // タスクリストがあるなら、推論を呼ぶ
     if (!taskList.empty()) {
-      inference(taskList);
+      action = inference(task, taskList);
       taskList.clear();
     } else {
       reqManager.events[task]->wait();
+      action = actions[task];
     }
 
-    auto action = actions[task];
-    reqManager.events[task]->reset();
     // std::cout << "after inference action " << task << std::endl;
 
     actions[task] = INVALID_ACTION;
@@ -133,11 +133,13 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-void Learner::inference(std::vector<int> &envIds) {
+int Learner::inference(int envId, std::vector<int> &envIds) {
   // std::cout << "called inference " << envIds << std::endl;
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   //   std::cout << "0 inference " << envIds << std::endl;
   std::vector<Request> &requests = reqManager.requests;
+  int action;
+
   InferenceData params(state, inferBatchSize, 1);
   localBuffer.setInferenceParam(envIds, &params, requests);
 
@@ -179,11 +181,6 @@ void Learner::inference(std::vector<int> &envIds) {
   auto selectActions = torch::where(probs < epsThreshold, randomActions,
                                     torch::argmax(q, 2).squeeze(1));
 
-  assert(randomActions.size(0) != 0);
-  assert(q.size(0) != 0);
-  assert(torch::argmax(q, 2).squeeze(1).size(0) != 0);
-  assert(selectActions.size(0) != 0);
-
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   // std::cout << "3 inference " << envIds << std::endl;
   auto transitions = localBuffer.updateAndGetTransitions(
@@ -207,9 +204,6 @@ void Learner::inference(std::vector<int> &envIds) {
     //   std::cout << "$$$$$$$$$$$$$$$ replayDatas[0].state.sizes " <<
     //   replayDatas[0].state.sizes() << std::endl;
 
-    for (auto r : replayDatas) {
-      assert(r.action.size(0) != 0);
-    }
     replay.putReplayQueue(priorities, replayDatas);
     // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
     // std::cout << "6 inference " << envIds << std::endl;
@@ -218,11 +212,16 @@ void Learner::inference(std::vector<int> &envIds) {
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   // std::cout << "7 inference " << envIds << std::endl;
   for (int i = 0; i < envIds.size(); i++) {
-    actions[envIds[i]] = selectActions.index({i}).item<int>();
-    reqManager.events[envIds[i]]->set();
+    if (envId != envIds[i]) {
+      actions[envIds[i]] = selectActions.index({i}).item<int>();
+      reqManager.events[envIds[i]]->set();
+    } else {
+      action = selectActions.index({i}).item<int>();
+    }
     // std::cout << "action set " << envIds[i] << std::endl;
   }
   // std::cout << "actions " << actions << std::endl;
+  return action;
 }
 
 void Learner::trainLoop() {
@@ -231,15 +230,19 @@ void Learner::trainLoop() {
   torch::optim::Adam optimizer(agent.onlineNet.parameters(),
                                /*lr=*/LEARNING_RATE);
 
-  // auto trainDataLoader = torch::data::make_data_loader(
-  //   ReplayDataset(replay),
-  //   torch::data::DataLoaderOptions().batch_size(1).workers(1)
-  // );
+  auto dataset = ReplayDataset(replay);
+  auto trainDataLoader = torch::data::make_data_loader(
+      dataset, torch::data::DataLoaderOptions().batch_size(1).workers(1));
 
-  while (1) {
-    auto sample = replay.sample();
-    auto indexes = sample.indexes;
-    auto data = sample.datas;
+  for (auto &batch : *trainDataLoader) {
+    auto indexes = batch[0].data;
+    auto state = batch[0].target;
+    auto action = batch[1].data;
+    auto reward = batch[1].target;
+    auto done = batch[2].data;
+    auto ih = batch[2].target;
+    auto hh = batch[3].data;
+    auto policy = batch[3].target;
 
     // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype()
     // << std::endl; std::cout << "action " << data.action.sizes() << ", " <<
@@ -251,35 +254,31 @@ void Learner::trainLoop() {
     // " << data.hh.dtype() << std::endl; std::cout << "policy " <<
     // data.policy.sizes() << ", " << data.policy.dtype() << std::endl;
 
-    agent.onlineNet.forward(
-        data.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
-        data.action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
-        data.reward.index({Slice(), Slice(0, REPLAY_PERIOD)}), data.ih,
-        data.hh);
+    agent.onlineNet.forward(state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
+                            action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+                            reward.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+                            ih, hh);
 
-    agent.targetNet.forward(
-        data.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
-        data.action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
-        data.reward.index({Slice(), Slice(0, REPLAY_PERIOD)}), data.ih,
-        data.hh);
+    agent.targetNet.forward(state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
+                            action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+                            reward.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+                            ih, hh);
 
     auto onlineRet = agent.onlineNet.forward(
-        data.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        data.action.index({Slice(), Slice(REPLAY_PERIOD, -1)}),
-        data.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)}));
+        state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        action.index({Slice(), Slice(REPLAY_PERIOD, -1)}),
+        reward.index({Slice(), Slice(REPLAY_PERIOD, -1)}));
 
     auto targetRet = agent.targetNet.forward(
-        data.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        data.action.index({Slice(), Slice(REPLAY_PERIOD, -1)}),
-        data.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)}));
+        state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        action.index({Slice(), Slice(REPLAY_PERIOD, -1)}),
+        reward.index({Slice(), Slice(REPLAY_PERIOD, -1)}));
 
     auto retraceRet = retraceLoss(
-        data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
-            .unsqueeze(2),
-        data.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
-            .squeeze(-1),
-        data.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        data.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}).unsqueeze(2),
+        reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}).squeeze(-1),
+        done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         std::get<0>(onlineRet), std::get<0>(targetRet));
 
     auto losses = std::get<0>(retraceRet);

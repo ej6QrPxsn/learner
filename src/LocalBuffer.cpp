@@ -32,7 +32,6 @@ LocalBuffer::updateAndGetTransitions(
   auto ih = std::get<0>(lstmStates).permute({1, 0, 2});
   auto hh = std::get<1>(lstmStates).permute({1, 0, 2});
 
-  assert(action.size(0) != 0);
   for (int i = 0; i < envIds.size(); i++) {
     auto envId = envIds[i];
     auto index = indexes[envId];
@@ -88,10 +87,8 @@ LocalBuffer::updateAndGetTransitions(
           replayData.policy.index_put_({0, Slice(index, None)}, 0);
           retraceData.onlineQ.index_put_({0, Slice(index, None)}, 0);
 
-          assert(replayData.action.size(0) != 0);
-
-          replayList.push_back(std::move(replayData));
-          qList.push_back(std::move(retraceData));
+          replayList.emplace_back(std::move(replayData));
+          qList.emplace_back(std::move(retraceData));
         }
         index = 0;
       } else {
@@ -108,24 +105,8 @@ LocalBuffer::updateAndGetTransitions(
         replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
         replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
 
-        if (transitions[envId].action.size(0) == 0) {
-          // std::cout << "state: " << transitions[envId].state.sizes() <<
-          // std::endl; std::cout << "action: " <<
-          // transitions[envId].action.sizes() << std::endl; std::cout <<
-          // "reward: " << transitions[envId].reward.sizes() << std::endl;
-          // std::cout << "done: " << transitions[envId].done.sizes() <<
-          // std::endl; std::cout << "policy: " <<
-          // transitions[envId].policy.sizes() << std::endl; std::cout << "q: "
-          // << transitions[envId].q.sizes() << std::endl;
-
-          assert(transitions[envId].action.size(0) != 0);
-          assert(replayData.action.size(0) != 0);
-        }
-        assert(transitions[envId].action.size(0) != 0);
-        assert(replayData.action.size(0) != 0);
-
-        replayList.push_back(std::move(replayData));
-        qList.push_back(std::move(retraceData));
+        replayList.emplace_back(std::move(replayData));
+        qList.emplace_back(std::move(retraceData));
 
         index = 1 + replayPeriod;
       }
@@ -135,7 +116,7 @@ LocalBuffer::updateAndGetTransitions(
   }
 
   if (replayList.size() > returnSize) {
-    return {replayList, qList};
+    return std::move(std::make_tuple(replayList, qList));
   } else {
     return {emptyReplays, emptyQs};
   }
