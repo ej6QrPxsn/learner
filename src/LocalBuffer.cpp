@@ -2,6 +2,7 @@
 #include "Learner.hpp"
 
 using namespace torch::indexing;
+std::mutex mtx;
 
 void LocalBuffer::setInferenceParam(std::vector<int> &envIds,
                                     InferenceData *inferData,
@@ -24,13 +25,13 @@ void LocalBuffer::setInferenceParam(std::vector<int> &envIds,
   }
 }
 
-std::tuple<std::vector<ReplayData>, std::vector<RetraceQ>>
-LocalBuffer::updateAndGetTransitions(
+void LocalBuffer::updateAndGetTransitions(
     std::vector<int> &envIds, std::vector<Request> &requests,
     torch::Tensor &action, std::tuple<torch::Tensor, torch::Tensor> &lstmStates,
-    torch::Tensor &q, torch::Tensor &policy) {
-  auto ih = std::get<0>(lstmStates).permute({1, 0, 2});
-  auto hh = std::get<1>(lstmStates).permute({1, 0, 2});
+    torch::Tensor &q, torch::Tensor &policy, std::vector<ReplayData> *retReplay,
+    std::vector<RetraceQ> *retRetrace) {
+  auto ih = std::get<0>(lstmStates).permute({1, 0, 2}).clone();
+  auto hh = std::get<1>(lstmStates).permute({1, 0, 2}).clone();
 
   for (int i = 0; i < envIds.size(); i++) {
     auto envId = envIds[i];
@@ -44,6 +45,9 @@ LocalBuffer::updateAndGetTransitions(
     transitions[envId].q.index_put_({0, index}, q.index({i}));
     transitions[envId].policy.index_put_({0, index}, policy.index({i}));
 
+    prevIh[envId] = ih.index({i});
+    prevHh[envId] = hh.index({i});
+
     index++;
 
     if (index == seqLength || requests[envId].done) {
@@ -51,10 +55,10 @@ LocalBuffer::updateAndGetTransitions(
         prevIh[envId].index_put_({Slice()}, 0);
         prevIh[envId].index_put_({Slice()}, 0);
 
-        if (index > replayPeriod + 1) {
-          ReplayData replayData(state, 1, seqLength);
-          RetraceQ retraceData(1, seqLength, actionSize);
+        ReplayData replayData = ReplayData(state, 1, seqLength);
+        RetraceQ retraceData = RetraceQ(1, seqLength, actionSize);
 
+        if (index > replayPeriod + 1) {
           // 現在位置までコピー
           replayData.state.index_put_(
               {0, Slice(None, index)},
@@ -86,14 +90,16 @@ LocalBuffer::updateAndGetTransitions(
           replayData.done.index_put_({0, Slice(index, None)}, 0);
           replayData.policy.index_put_({0, Slice(index, None)}, 0);
           retraceData.onlineQ.index_put_({0, Slice(index, None)}, 0);
-
-          replayList.emplace_back(std::move(replayData));
-          qList.emplace_back(std::move(retraceData));
         }
         index = 0;
+
+        std::lock_guard lock(mtx);
+        replayList.emplace_back(std::move(replayData));
+        qList.emplace_back(std::move(retraceData));
       } else {
-        ReplayData replayData(state, 1, seqLength);
-        RetraceQ retraceData(1, seqLength, actionSize);
+        ReplayData replayData = ReplayData(state, 1, seqLength);
+        RetraceQ retraceData = RetraceQ(1, seqLength, actionSize);
+
         replayData.state = transitions[envId].state.clone();
         replayData.action = transitions[envId].action.clone();
         replayData.reward = transitions[envId].reward.clone();
@@ -105,24 +111,46 @@ LocalBuffer::updateAndGetTransitions(
         replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
         replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
 
+        index = 1 + replayPeriod;
+
+        // 末尾からバーンイン期間分を先頭へ移動
+        transitions[envId].state.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].state.index({0, Slice(-index, None)}));
+        transitions[envId].action.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].action.index({0, Slice(-index, None)}));
+        transitions[envId].reward.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].reward.index({0, Slice(-index, None)}));
+        transitions[envId].done.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].done.index({0, Slice(-index, None)}));
+        transitions[envId].ih.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].ih.index({0, Slice(-index, None)}));
+        transitions[envId].hh.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].hh.index({0, Slice(-index, None)}));
+        transitions[envId].q.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].q.index({0, Slice(-index, None)}));
+        transitions[envId].policy.index_put_(
+            {0, Slice(None, index)},
+            transitions[envId].policy.index({0, Slice(-index, None)}));
+
+        std::lock_guard lock(mtx);
         replayList.emplace_back(std::move(replayData));
         qList.emplace_back(std::move(retraceData));
-
-        index = 1 + replayPeriod;
       }
     }
 
     indexes[envId] = index;
   }
 
+  std::lock_guard lock(mtx);
   if (replayList.size() > returnSize) {
-    return std::move(std::make_tuple(replayList, qList));
-  } else {
-    return {emptyReplays, emptyQs};
+    replayList.swap(*retReplay);
+    qList.swap(*retRetrace);
   }
-}
-
-void LocalBuffer::reset() {
-  replayList.clear();
-  qList.clear();
 }

@@ -140,6 +140,9 @@ int Learner::inference(int envId, std::vector<int> &envIds) {
   std::vector<Request> &requests = reqManager.requests;
   int action;
 
+  std::vector<ReplayData> replayDatas;
+  std::vector<RetraceQ> retraceQs;
+
   InferenceData params(state, inferBatchSize, 1);
   localBuffer.setInferenceParam(envIds, &params, requests);
 
@@ -155,7 +158,7 @@ int Learner::inference(int envId, std::vector<int> &envIds) {
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   // std::cout << "2 inference " << envIds << std::endl;
 
-  auto q = std::get<0>(forwardRet);
+  auto q = std::get<0>(forwardRet).clone();
 
   // std::cout << "q: " << q << std::endl;
 
@@ -183,17 +186,18 @@ int Learner::inference(int envId, std::vector<int> &envIds) {
 
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   // std::cout << "3 inference " << envIds << std::endl;
-  auto transitions = localBuffer.updateAndGetTransitions(
-      envIds, requests, selectActions, lstmStates, q, policies);
+  localBuffer.updateAndGetTransitions(envIds, requests, selectActions,
+                                      lstmStates,
+                                      q, policies,
+                                      &replayDatas, &retraceQs);
 
   // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
   // std::cout << "4 inference " << envIds << std::endl;
-  auto replayDatas = std::get<0>(transitions);
   if (replayDatas.size() > 0) {
-    auto retraceData = dataConverter.toBatchedRetraceData(
-        replayDatas, std::get<1>(transitions));
+    int batchSize = replayDatas.size();
+    RetraceData retraceData(batchSize, 1 + TRACE_LENGTH, actionSize);
 
-    localBuffer.reset();
+    dataConverter.toBatchedRetraceData(replayDatas, retraceQs, &retraceData);
 
     auto priorities = std::get<1>(retraceLoss(
         retraceData.action, retraceData.reward, retraceData.done,

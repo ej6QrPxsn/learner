@@ -102,8 +102,11 @@ public:
   DataConverter(torch::Tensor &state_, int actionSize_, int seqLength_)
       : state(state_), actionSize(actionSize_), seqLength(seqLength_) {}
 
-  TrainData toBatchedTrainData(std::vector<ReplayData> &dataList);
-  RetraceData toBatchedRetraceData(std::vector<ReplayData> &replayDatas, std::vector<RetraceQ> &RetraceQs);
+  TrainData toBatchedTrainData(std::vector<ReplayData> dataList);
+  void
+  toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
+                       std::vector<RetraceQ> &RetraceQs,
+                       RetraceData *retrace);
 
 private:
   int actionSize;

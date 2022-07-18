@@ -1,7 +1,7 @@
 #include "DataConverter.hpp"
 #include "Common.hpp"
 
-TrainData DataConverter::toBatchedTrainData(std::vector<ReplayData> &dataList) {
+TrainData DataConverter::toBatchedTrainData(std::vector<ReplayData> dataList) {
   int batchSize = dataList.size();
   TrainData train(state, batchSize, seqLength);
 
@@ -20,18 +20,23 @@ TrainData DataConverter::toBatchedTrainData(std::vector<ReplayData> &dataList) {
   return std::move(train);
 }
 
-RetraceData DataConverter::toBatchedRetraceData(std::vector<ReplayData> &replayDatas, std::vector<RetraceQ> &RetraceQs) {
+void DataConverter::toBatchedRetraceData(std::vector<ReplayData> & replayDatas,
+                                         std::vector<RetraceQ> & RetraceQs,
+                                         RetraceData *retrace) {
   int batchSize = replayDatas.size();
-  RetraceData retrace(batchSize, 1 + TRACE_LENGTH, actionSize);
-
   for (int i = 0; i < batchSize; i++) {
-    retrace.action.index_put_({i}, replayDatas[i].action.index({0, Slice(REPLAY_PERIOD, None)}));
-    retrace.reward.index_put_({i}, replayDatas[i].reward.index({0, Slice(REPLAY_PERIOD, None), 0}));
-    retrace.done.index_put_({i}, replayDatas[i].done.index({0, Slice(REPLAY_PERIOD, None), 0}));
-    retrace.policy.index_put_({i}, replayDatas[i].policy.index({0, Slice(REPLAY_PERIOD, None), 0}));
-    retrace.onlineQ.index_put_({i}, RetraceQs[i].onlineQ.index({0, Slice(REPLAY_PERIOD, None)}));
-    retrace.targetQ.index_put_({i}, RetraceQs[i].onlineQ.index({0, Slice(REPLAY_PERIOD, None)}));
+    retrace->action.index_put_(
+        {i}, replayDatas[i].action.index({0, Slice(REPLAY_PERIOD, None)}));
+    retrace->reward.index_put_(
+        {i}, replayDatas[i].reward.index({0, Slice(REPLAY_PERIOD, None), 0}));
+    retrace->done.index_put_(
+        {i}, replayDatas[i].done.index({0, Slice(REPLAY_PERIOD, None), 0}));
+    retrace->policy.index_put_(
+        {i}, replayDatas[i].policy.index({0, Slice(REPLAY_PERIOD, None), 0}));
+    retrace->onlineQ.index_put_(
+        {i}, RetraceQs[i].onlineQ.index({0, Slice(REPLAY_PERIOD, None)}));
+    retrace->targetQ.index_put_(
+        {i}, RetraceQs[i].onlineQ.index({0, Slice(REPLAY_PERIOD, None)}));
   }
-  return retrace;
 }
 

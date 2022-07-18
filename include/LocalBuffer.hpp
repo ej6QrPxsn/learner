@@ -39,12 +39,13 @@ public:
 
   void setInferenceParam(std::vector<int> &envIds, InferenceData *inferData,
                          std::vector<Request> &requests);
-  std::tuple<std::vector<ReplayData>, std::vector<RetraceQ>>
+  void
   updateAndGetTransitions(std::vector<int> &envIds,
                           std::vector<Request> &requests, torch::Tensor &action,
                           std::tuple<torch::Tensor, torch::Tensor> &lstmStates,
-                          torch::Tensor &q, torch::Tensor &policy);
-  void reset();
+                          torch::Tensor &q, torch::Tensor &policy,
+                          std::vector<ReplayData> *retReplay,
+                          std::vector<RetraceQ> *retRetrace);
 
 private:
   const int replayPeriod;
@@ -56,8 +57,6 @@ private:
   std::vector<Transition> transitions;
   std::vector<ReplayData> replayList;
   std::vector<RetraceQ> qList;
-  std::vector<ReplayData> emptyReplays;
-  std::vector<RetraceQ> emptyQs;
   std::vector<int> indexes;
   std::vector<torch::Tensor> prevIh;
   std::vector<torch::Tensor> prevHh;
