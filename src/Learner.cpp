@@ -286,7 +286,7 @@ void Learner::trainLoop() {
         std::get<0>(onlineRet), std::get<0>(targetRet));
 
     auto losses = std::get<0>(retraceRet);
-    auto priorities = std::get<0>(retraceRet);
+    auto priorities = std::get<1>(retraceRet);
 
     // Reset gradients.
     optimizer.zero_grad();

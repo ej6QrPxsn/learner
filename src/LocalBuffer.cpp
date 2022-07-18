@@ -13,15 +13,10 @@ void LocalBuffer::setInferenceParam(std::vector<int> &envIds,
     auto envId = envIds[i];
     inferData->state.index_put_({i, 0}, requests[envId].state / 255.0);
     auto index = indexes[envId];
-    if (index > 0) {
-      inferData->prevAction.index_put_(
-          {i}, transitions[envId].action.index({0, index - 1}));
-      inferData->PrevReward.index_put_(
-          {i}, transitions[envId].reward.index({0, index - 1}));
-    } else {
-      inferData->prevAction.index_put_({i}, 0);
-      inferData->PrevReward.index_put_({i}, 0);
-    }
+    inferData->prevAction.index_put_(
+        {i}, transitions[envId].action.index({0, index}));
+    inferData->PrevReward.index_put_(
+        {i}, transitions[envId].reward.index({0, index}));
   }
 }
 
