@@ -18,35 +18,22 @@ inline auto h_1(torch::Tensor x) {
 }
 
 inline auto getRetraceOperatorSigma(int s, torch::Tensor td,
-                                    torch::Tensor retraceCoefficients,
-                                    int batchSize) {
+                                    torch::Tensor retraceCoefficients) {
   auto tdValue = td.index({Slice(), s}).unsqueeze(1);
   // std::cout << "tdValue: " << tdValue.sizes() << std::endl;
   std::vector<torch::Tensor> values;
   for (int j = s; j < TRACE_LENGTH; j++) {
-  //   if (j < 2) {
-  //     auto val = torch::ones({batchSize, 1});
-  // std::cout << "j < 2: " << val.sizes() << std::endl;
-  //     values.push_back(val);
-  //   } else {
-  // std::cout << "else1: " << retraceCoefficients.sizes() << std::endl;
-  // std::cout << "else2: " << retraceCoefficients.index(
-  //                                      {Slice(), Slice(s + 1, j + 1)}).sizes() << std::endl;
-  // std::cout << "else3: " << torch::prod(retraceCoefficients.index(
-  //                                      {Slice(), Slice(s + 1, j + 1)}) *
-  //                                  tdValue, 1) << std::endl;
-  // std::cout << "else4: " << std::pow(DISCOUNT_GAMMA, j - s) << std::endl;
-      auto val = std::pow(DISCOUNT_GAMMA, j - s) *
-                       torch::prod(retraceCoefficients.index(
-                                       {Slice(), Slice(s + 1, j + 1)})) *
-                                   tdValue;
-  // std::cout << "else: " << val.sizes() << std::endl;
-      values.emplace_back(val);
+    auto val =
+        std::pow(DISCOUNT_GAMMA, j - s) *
+        torch::prod(retraceCoefficients.index({Slice(), Slice(s + 1, j + 1)})) *
+        tdValue;
+    // std::cout << "else: " << val.sizes() << std::endl;
+    values.emplace_back(val);
     // }
   }
 
   //  std::cout << "values: " << values[0].sizes() << std::endl;
- // seq, batch
+  // seq, batch
   auto sequenceValues = torch::cat(values, 1);
 
   // batch
@@ -66,30 +53,32 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   // std::cout << "policy: " << policy.sizes() << std::endl;
   // std::cout << "onlineQ: " << onlineQ.sizes() << std::endl;
 
-
   // オンラインポリシーのgreedyなものがターゲットポリシー
   auto targetPolicy = std::get<0>(torch::max(torch::softmax(onlineQ, 2), 2));
   // std::cout << "targetPolicy: " << targetPolicy.sizes() << std::endl;
 
-  auto currentTargetQValue = std::get<0>(
-      torch::max(targetQ.index({Slice(), Slice(None, -1)}), 2));
-  // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes() << std::endl;
+  auto currentTargetQValue =
+      std::get<0>(torch::max(targetQ.index({Slice(), Slice(None, -1)}), 2));
+  // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes() <<
+  // std::endl;
 
   auto nextTargetPolicy =
       torch::softmax(targetQ.index({Slice(), Slice(1, None)}), 2);
   // std::cout << "nextTargetPolicy: " << nextTargetPolicy.sizes() << std::endl;
-  // std::cout << "targetQ: " << targetQ.index({Slice(), Slice(1, None)}).sizes() << std::endl;
-  // std::cout << "torch::sum: " << torch::sum(
-          // h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})), 2).sizes() << std::endl;
+  // std::cout << "targetQ: " << targetQ.index({Slice(), Slice(1,
+  // None)}).sizes() << std::endl; std::cout << "torch::sum: " << torch::sum(
+  // h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})),
+  // 2).sizes() << std::endl;
 
   auto nextTargetQValue =
       DISCOUNT_GAMMA *
       torch::sum(
           h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})), 2);
 
-  // std::cout << "reward.index({Slice(), Slice(None, -1)}): " << reward.index({Slice(), Slice(None, -1)}).sizes() << std::endl;
-  // std::cout << "nextTargetQValue: " << nextTargetQValue.sizes() << std::endl;
-  // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes() << std::endl;
+  // std::cout << "reward.index({Slice(), Slice(None, -1)}): " <<
+  // reward.index({Slice(), Slice(None, -1)}).sizes() << std::endl; std::cout <<
+  // "nextTargetQValue: " << nextTargetQValue.sizes() << std::endl; std::cout <<
+  // "currentTargetQValue: " << currentTargetQValue.sizes() << std::endl;
   auto td = reward.index({Slice(), Slice(None, -1)}) + nextTargetQValue -
             currentTargetQValue;
   // std::cout << "td: " << td.sizes() << std::endl;
@@ -103,18 +92,19 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   auto noZeroPolicy = torch::where(policy == zero, epsilon, policy);
   auto retraceCoefficients =
       RETRACE_LAMBDA * torch::minimum(targetPolicy / noZeroPolicy, one);
-  // std::cout << "retraceCoefficients: " << retraceCoefficients.sizes() << std::endl;
+  // std::cout << "retraceCoefficients: " << retraceCoefficients.sizes() <<
+  // std::endl;
 
   // batch, seqごとのリトレースオペレーターの中のシグマ配列
   // batch, seq <- [batch, 1] * seq
   std::vector<torch::Tensor> sigmaList;
   for (auto s = 0; s < retraceLength; s++) {
-    sigmaList.emplace_back(
-        getRetraceOperatorSigma(s, td, retraceCoefficients, batchSize));
+    sigmaList.emplace_back(getRetraceOperatorSigma(s, td, retraceCoefficients));
   }
 
   auto retraceOperatorSigma = torch::cat(sigmaList, 1);
-  // std::cout << "retraceOperatorSigma: " << retraceOperatorSigma.sizes() << std::endl;
+  // std::cout << "retraceOperatorSigma: " << retraceOperatorSigma.sizes() <<
+  // std::endl;
 
   auto retraceOperator = h(h_1(currentTargetQValue) + retraceOperatorSigma);
   // std::cout << "retraceOperator: " << retraceOperator.sizes() << std::endl;

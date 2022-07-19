@@ -74,9 +74,9 @@ public:
   Replay(DataConverter converter, int capacity)
       : dataConverter(converter), buffer(ReplayBuffer(capacity)) {}
 
-  void updatePriorities(torch::Tensor indexes, torch::Tensor priorities) {
-    for (int i = 0; i < indexes.size(0); i++) {
-      buffer.update(indexes.index({i}).item<int>(),
+  void updatePriorities(std::vector<int> indexes, torch::Tensor priorities) {
+    for (int i = 0; i < indexes.size(); i++) {
+      buffer.update(indexes[i],
                     priorities.index({i}).item<float>());
     }
   }
@@ -124,33 +124,6 @@ public:
   ReplayBuffer buffer;
   std::deque<std::tuple<torch::Tensor, std::vector<ReplayData>>> replayQueue;
   std::mutex replayMtx;
-};
-
-class ReplayDataset : public torch::data::datasets::Dataset<ReplayDataset> {
-  using Example = torch::data::Example<>;
-
-private:
-  Replay &replay;
-
-public:
-  ReplayDataset(Replay &replay_) : replay(replay_){};
-
-  c10::optional<size_t> size() const override {
-    return c10::optional<size_t>(1);
-  };
-
-  Example get(size_t index) {
-    auto data = replay.sample();
-    return {torch::tensor(std::get<0>(data)), torch::empty({0})};
-  }
-
-  std::vector<Example> get_batch(c10::ArrayRef<size_t> indices) override {
-    auto sample = replay.sample();
-    auto data = std::get<1>(sample);
-    return {Example(torch::tensor(std::get<0>(sample)), data.state),
-            Example(data.action, data.reward), Example(data.done, data.ih),
-            Example(data.hh, data.policy)};
-  }
 };
 
 #endif // REPLAY_HPP
