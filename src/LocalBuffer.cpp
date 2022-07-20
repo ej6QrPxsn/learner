@@ -12,11 +12,11 @@ void LocalBuffer::setInferenceParam(std::vector<int> &envIds,
   for (int i = 0; i < size; i++) {
     auto envId = envIds[i];
     inferData->state.index_put_({i, 0}, requests[envId].state / 255.0);
-    auto index = indexes[envId];
+    auto prevIndex = prevIndexes[envId];
     inferData->prevAction.index_put_(
-        {i}, transitions[envId].action.index({0, index}));
+        {i}, transitions[envId].action.index({0, prevIndex}));
     inferData->PrevReward.index_put_(
-        {i}, transitions[envId].reward.index({0, index}));
+        {i}, transitions[envId].reward.index({0, prevIndex}));
   }
 }
 
@@ -27,6 +27,8 @@ void LocalBuffer::updateAndGetTransitions(
     std::vector<RetraceQ> *retRetrace) {
   auto ih = std::get<0>(lstmStates).permute({1, 0, 2}).clone();
   auto hh = std::get<1>(lstmStates).permute({1, 0, 2}).clone();
+
+  prevIndexes = indexes;
 
   for (int i = 0; i < envIds.size(); i++) {
     auto envId = envIds[i];

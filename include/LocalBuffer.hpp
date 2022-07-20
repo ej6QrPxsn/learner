@@ -34,6 +34,7 @@ public:
         state(_state),
         transitions(numEnvs, Transition(_state, 1, seqLength, actionSize)),
         indexes(numEnvs, 0),
+        prevIndexes(numEnvs, 0),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
@@ -58,6 +59,7 @@ private:
   std::vector<ReplayData> replayList;
   std::vector<RetraceQ> qList;
   std::vector<int> indexes;
+  std::vector<int> prevIndexes;
   std::vector<torch::Tensor> prevIh;
   std::vector<torch::Tensor> prevHh;
 };
