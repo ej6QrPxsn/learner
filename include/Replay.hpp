@@ -5,10 +5,10 @@
 #include "SumTree.hpp"
 #include "Utils.hpp"
 #include <deque>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <random>
-
 class ReplayBuffer {
 public:
   ReplayBuffer(int capacity) : tree(SumTree(capacity)), count(0) {}
@@ -28,9 +28,9 @@ public:
                   << REPLAY_BUFFER_MIN_SIZE << " elements" << std::endl;
       }
     } else if (count == REPLAY_BUFFER_MIN_SIZE) {
-        std::cout << "Replay buffer filled up. "
-                  << "It currently has " << count << " elements.";
-        std::cout << " Start training." << std::endl;
+      std::cout << "Replay buffer filled up. "
+                << "It currently has " << count << " elements.";
+      std::cout << " Start training." << std::endl;
     }
   }
 
@@ -72,58 +72,71 @@ private:
 class Replay {
 public:
   Replay(DataConverter converter, int capacity)
-      : dataConverter(converter), buffer(ReplayBuffer(capacity)) {}
+      : dataConverter(converter), buffer(ReplayBuffer(capacity)) {
+    std::promise<void> bufferNotification;
+    waitForNotification = bufferNotification.get_future();
+
+    addThread =
+        std::thread(&Replay::addLoop, this, std::move(bufferNotification));
+  }
 
   void updatePriorities(std::vector<int> indexes, torch::Tensor priorities) {
     for (int i = 0; i < indexes.size(); i++) {
-      buffer.update(indexes[i],
-                    priorities.index({i}).item<float>());
+      buffer.update(indexes[i], priorities.index({i}).item<float>());
     }
   }
 
-  inline void putReplayQueue(torch::Tensor priorities,
-                             std::vector<ReplayData> data) {
-    std::lock_guard<std::mutex> lock(replayMtx);
+  void putReplayQueue(torch::Tensor priorities, std::vector<ReplayData> data) {
     if (replayQueue.size() < MAX_REPLAY_QUEUE_SIZE) {
       replayQueue.emplace_back(std::move(std::make_tuple(priorities, data)));
+      condVar.notify_one();
     }
   }
 
-  inline void replayDataAdd() {
-    while (!replayQueue.empty()) {
-      std::tuple<torch::Tensor, std::vector<ReplayData>> queueData;
-      {
-        std::lock_guard<std::mutex> lock(replayMtx);
-        queueData = std::move(replayQueue.front());
-        replayQueue.pop_front();
-      }
+  void addReplay() {
+    {
+      std::unique_lock<std::mutex> lck(replayMtx);
+      condVar.wait(lck, [&] { return !replayQueue.empty(); });
+    }
 
-      auto priorities = std::get<0>(queueData);
-      auto dataList = std::get<1>(queueData);
+    auto queueData = std::move(replayQueue.front());
+    replayQueue.pop_front();
 
-      for (int i = 0; i < dataList.size(); i++) {
-        buffer.add(priorities.index({i}).item<float>(), dataList[i]);
-      }
+    auto priorities = std::get<0>(queueData);
+    auto dataList = std::get<1>(queueData);
+
+    for (int i = 0; i < dataList.size(); i++) {
+      buffer.add(priorities.index({i}).item<float>(), dataList[i]);
+    }
+  }
+
+  void addLoop(std::promise<void> bufferNotification) {
+    while (buffer.get_count() < REPLAY_BUFFER_MIN_SIZE) {
+      addReplay();
+    }
+
+    bufferNotification.set_value();
+
+    while (1) {
+      addReplay();
     }
   }
 
   auto sample() {
-    while (buffer.get_count() < REPLAY_BUFFER_MIN_SIZE) {
-      replayDataAdd();
-    }
-
-    replayDataAdd();
-
+    waitForNotification.wait();
     auto sample = buffer.sample(BATCH_SIZE);
     auto indexes = std::get<0>(sample);
     auto data = dataConverter.toBatchedTrainData(std::get<1>(sample));
     return std::make_tuple(indexes, data);
   }
 
+  std::future<void> waitForNotification;
+  std::thread addThread;
   DataConverter dataConverter;
   ReplayBuffer buffer;
   std::deque<std::tuple<torch::Tensor, std::vector<ReplayData>>> replayQueue;
   std::mutex replayMtx;
+  std::condition_variable condVar;
 };
 
 #endif // REPLAY_HPP
