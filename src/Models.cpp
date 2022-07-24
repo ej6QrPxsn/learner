@@ -31,8 +31,8 @@ std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>> R2D2Agent::f
 {
   auto x = forwardConv(state);
   auto lstmRet = forwardLstm(x, prevAction, prevReward, ih, hh);
-  auto batchSize = state.sizes()[0];
-  auto seqLen = state.sizes()[1];
+  auto batchSize = state.size(0);
+  auto seqLen = state.size(1);
 
   auto input = std::get<0>(lstmRet);
   auto lstm_state = std::get<1>(lstmRet);

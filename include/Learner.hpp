@@ -13,33 +13,32 @@ const auto INVALID_ACTION = 99;
 class Learner {
 public:
   Learner(torch::Tensor state_, int actionSize_, int numEnvs_, int traceLength,
-          int replayPeriod, int returnSize, int capacity)
-      : numEnvs(numEnvs_), actionSize(actionSize_), inferBatchSize(std::floor(numEnvs_ / 2)),
-        agent(actionSize_), state(state_),
-        reqManager(numEnvs, inferBatchSize, state_),
-        localBuffer(state_, actionSize_, numEnvs, traceLength, replayPeriod,
-                    returnSize),
+          int replayPeriod, int returnSize_, int capacity)
+      : numEnvs(numEnvs_), actionSize(actionSize_),
+        inferBatchSize(std::floor(numEnvs_ / 2)), agent(actionSize_),
+        returnSize(returnSize_), state(state_),
+        localBuffer(state_, numEnvs, returnSize_),
         dataConverter(state_, actionSize_, 1 + replayPeriod + traceLength),
-        replay(dataConverter, capacity), actions(numEnvs, INVALID_ACTION) {}
+        replay(dataConverter, capacity) {}
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(int envId, std::vector<int> &envIds);
+  int inference(int envId, Request &request);
   Replay *getReplay() { return &replay; }
   void trainLoop();
 
 private:
-  int numEnvs;
-  int actionSize;
-  int inferBatchSize;
+  const int numEnvs;
+  const int actionSize;
+  const int inferBatchSize;
+  const int returnSize;
+
   Agent agent;
   torch::Tensor state;
-  RequestManager reqManager;
   std::vector<Request> requests;
   LocalBuffer localBuffer;
   DataConverter dataConverter;
   Replay replay;
-  std::vector<int> actions;
 };
 
 #endif // LEARNER_HPP

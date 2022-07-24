@@ -8,9 +8,9 @@
 
 class Request;
 
-struct InferenceData {
-  InferenceData() {}
-  InferenceData(torch::Tensor state_, int batchSize, int seqLength) {
+struct InferInput {
+  InferInput() {}
+  InferInput(torch::Tensor state_, int batchSize, int seqLength) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
@@ -27,31 +27,27 @@ struct InferenceData {
 
 class LocalBuffer {
 public:
-  LocalBuffer(torch::Tensor &_state, int _actionSize, int numEnvs,
-              int _traceLength, int _replayPeriod, int _returnSize)
-      : replayPeriod(_replayPeriod), actionSize(_actionSize),
-        seqLength(1 + replayPeriod + _traceLength), returnSize(_returnSize),
-        state(_state),
-        transitions(numEnvs, Transition(_state, 1, seqLength, actionSize)),
-        indexes(numEnvs, 0),
-        prevIndexes(numEnvs, 0),
+  LocalBuffer(torch::Tensor &_state, int numEnvs, int _returnSize)
+      : returnSize(_returnSize), state(_state),
+        transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
+        indexes(numEnvs, 0), prevIndexes(numEnvs, 0),
+        replayList(_returnSize, ReplayData(_state, 1, SEQ_LENGTH)),
+        qList(_returnSize, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
-  void setInferenceParam(std::vector<int> &envIds, InferenceData *inferData,
-                         std::vector<Request> &requests);
-  void
-  updateAndGetTransitions(std::vector<int> &envIds,
-                          std::vector<Request> &requests, torch::Tensor &action,
-                          std::tuple<torch::Tensor, torch::Tensor> &lstmStates,
-                          torch::Tensor &q, torch::Tensor &policy,
-                          std::vector<ReplayData> *retReplay,
-                          std::vector<RetraceQ> *retRetrace);
+  void setInferenceParam(int envId, Request &request, InferInput *inferData);
+  void updateAndGetTransition(int envId, Request &request,
+                              torch::Tensor &action, torch::Tensor &ih,
+                              torch::Tensor &hh, torch::Tensor &q,
+                              torch::Tensor &policy,
+                              std::vector<ReplayData> *retReplay,
+                              std::vector<RetraceQ> *retRetrace);
+
+  void getTransitions(std::vector<ReplayData> *retReplay,
+                      std::vector<RetraceQ> *retRetrace);
 
 private:
-  const int replayPeriod;
-  const int actionSize;
-  const int seqLength;
   const int returnSize;
 
   torch::Tensor state;

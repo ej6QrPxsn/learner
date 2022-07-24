@@ -8,6 +8,14 @@
 
 using namespace torch::indexing;
 
+const auto MAX_INFER_COUNT = 16;
+std::tuple<at::Tensor, std::tuple<at::Tensor, at::Tensor>>
+    gInferOutputs[MAX_INFER_COUNT] = {std::make_tuple(
+        torch::zeros({8, ACTION_SIZE}),
+        std::make_tuple(torch::zeros({8, 1, 512}), torch::zeros({8, 1, 512})))};
+
+std::atomic<int> gInferOutputCount = 0;
+
 int Learner::listenActor() {
 
   int ret_code = 0;
@@ -88,8 +96,9 @@ int Learner::sendAndRecieveActor(int fd_other) {
   ssize_t size = 0;
   uint32_t buf_len = 0;
   char buf[10240];
-  std::vector<int> taskList;
+  Request request;
   int action;
+  Event event;
 
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
@@ -101,98 +110,60 @@ int Learner::sendAndRecieveActor(int fd_other) {
     // printf("buf_len = %d\n", buf_len);
 
     int task = buf[0];
-    // if (task == 4)
-    //   std::cout << "recv " << task << " id " << std::this_thread::get_id() <<
-    //   std::endl;
-    reqManager.requests[task].state =
-        torch::from_blob(&buf[4], state.sizes(), state.dtype());
-    reqManager.requests[task].reward = buf[buf_len - 5];
-    reqManager.requests[task].done = buf[buf_len - 1];
 
-    reqManager.addTask(task, &taskList);
+    request.state = torch::from_blob(&buf[4], state.sizes(), state.dtype());
+    request.reward = buf[buf_len - 5];
+    request.done = buf[buf_len - 1];
 
-    // タスクリストがあるなら、推論を呼ぶ
-    if (!taskList.empty()) {
-      action = inference(task, taskList);
-      taskList.clear();
-    } else {
-      reqManager.events[task]->wait();
-      action = actions[task];
-    }
-
-    // std::cout << "after inference action " << task << std::endl;
-
-    actions[task] = INVALID_ACTION;
-    // printf("after loop %d\n", task);
+    action = inference(task, request);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
       perror("send");
     }
-    // std::cout << "after send " << task << std::endl;
   }
 }
 
-int Learner::inference(int envId, std::vector<int> &envIds) {
-  // std::cout << "called inference " << envIds << std::endl;
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  //   std::cout << "0 inference " << envIds << std::endl;
-  std::vector<Request> &requests = reqManager.requests;
+int Learner::inference(int envId, Request &request) {
   int action;
-
   std::vector<ReplayData> replayDatas;
   std::vector<RetraceQ> retraceQs;
 
-  InferenceData params(state, inferBatchSize, 1);
-  localBuffer.setInferenceParam(envIds, &params, requests);
+  InferInput inferInput(state, 1, 1);
+  localBuffer.setInferenceParam(envId, request, &inferInput);
 
-  std::tuple<at::Tensor, std::tuple<at::Tensor, at::Tensor>> forwardRet;
-
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  // std::cout << "1 inference " << envIds << std::endl;
+  std::tuple<at::Tensor, std::tuple<at::Tensor, at::Tensor>> ret;
   {
     c10::InferenceMode guard(true);
-    forwardRet = agent.onlineNet.forward(params.state, params.prevAction,
-                                         params.PrevReward);
+    ret = agent.onlineNet.forward(inferInput.state, inferInput.prevAction,
+                                  inferInput.PrevReward);
   }
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  // std::cout << "2 inference " << envIds << std::endl;
 
-  auto q = std::get<0>(forwardRet).clone();
-
-  // std::cout << "q: " << q << std::endl;
-
-  auto lstmStates = std::get<1>(forwardRet);
+  auto q = std::get<0>(ret).clone().index({0});
+  auto lstmStates = std::get<1>(ret);
+  auto ih = std::get<0>(lstmStates).permute({1, 0, 2}).clone().index({0});
+  auto hh = std::get<1>(lstmStates).permute({1, 0, 2}).clone().index({0});
 
   // 選択アクションの確率
-  auto policies = std::get<0>(torch::max(torch::softmax(q, 2), 2));
+  auto policy = std::get<0>(torch::max(torch::softmax(q, 1), 1));
 
   // std::cout << "policies: " << policies << std::endl;
 
   // 環境ごとの閾値
-  auto epsThreshold = torch::pow(0.4, torch::linspace(1., 8., requests.size()))
-                          .index({torch::tensor(envIds)});
+  auto epsThreshold =
+      torch::pow(0.4, torch::linspace(1., 8., numEnvs)).index({envId});
 
-  auto randomActions =
-      torch::randint(0, q.size(2), envIds.size()).to(torch::kLong);
-  auto probs = torch::randn(envIds.size());
+  auto randomAction = torch::randint(0, q.size(1), 1).to(torch::kLong);
+  auto prob = torch::randn(1);
 
-  // std::cout << "probs: " << probs<< std::endl;
-  // std::cout << "epsThreshold: " << epsThreshold << std::endl;
-  // std::cout << "randomActions: " << randomActions << std::endl;
+  auto selectAction =
+      torch::where(prob < epsThreshold, randomAction, torch::argmax(q, 1));
 
-  auto selectActions = torch::where(probs < epsThreshold, randomActions,
-                                    torch::argmax(q, 2).squeeze(1));
+  localBuffer.updateAndGetTransition(envId, request, selectAction, ih, hh, q,
+                                     policy, &replayDatas, &retraceQs);
 
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  // std::cout << "3 inference " << envIds << std::endl;
-  localBuffer.updateAndGetTransitions(envIds, requests, selectActions,
-                                      lstmStates, q, policies, &replayDatas,
-                                      &retraceQs);
+  if (!replayDatas.empty()) {
 
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  // std::cout << "4 inference " << envIds << std::endl;
-  if (replayDatas.size() > 0) {
     int batchSize = replayDatas.size();
     RetraceData retraceData(batchSize, 1 + TRACE_LENGTH, actionSize);
 
@@ -201,30 +172,11 @@ int Learner::inference(int envId, std::vector<int> &envIds) {
     auto priorities = std::get<1>(retraceLoss(
         retraceData.action, retraceData.reward, retraceData.done,
         retraceData.policy, retraceData.onlineQ, retraceData.targetQ));
-    // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-    // std::cout << "5 inference " << envIds << std::endl;
-
-    //   std::cout << "$$$$$$$$$$$$$$$ replayDatas[0].state.sizes " <<
-    //   replayDatas[0].state.sizes() << std::endl;
 
     replay.putReplayQueue(priorities, replayDatas);
-    // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-    // std::cout << "6 inference " << envIds << std::endl;
   }
 
-  // if(std::find(envIds.begin(), envIds.end(), 4) != envIds.end())
-  // std::cout << "7 inference " << envIds << std::endl;
-  for (int i = 0; i < envIds.size(); i++) {
-    if (envId != envIds[i]) {
-      actions[envIds[i]] = selectActions.index({i}).item<int>();
-      reqManager.events[envIds[i]]->set();
-    } else {
-      action = selectActions.index({i}).item<int>();
-    }
-    // std::cout << "action set " << envIds[i] << std::endl;
-  }
-  // std::cout << "actions " << actions << std::endl;
-  return action;
+  return selectAction.item<int>();
 }
 
 void Learner::trainLoop() {
