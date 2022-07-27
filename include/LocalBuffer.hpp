@@ -37,18 +37,16 @@ public:
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
   void setInferenceParam(int envId, Request &request, InferInput *inferData);
-  void updateAndGetTransition(int envId, Request &request,
-                              torch::Tensor &action, torch::Tensor &ih,
-                              torch::Tensor &hh, torch::Tensor &q,
-                              torch::Tensor &policy,
-                              std::vector<ReplayData> *retReplay,
-                              std::vector<RetraceQ> *retRetrace);
+  bool update(int envId, Request &request, torch::Tensor &action,
+              torch::Tensor &ih, torch::Tensor &hh, torch::Tensor &q,
+              torch::Tensor &policy);
 
   void getTransitions(std::vector<ReplayData> *retReplay,
                       std::vector<RetraceQ> *retRetrace);
 
 private:
   const int returnSize;
+  int replaySize = 0;
 
   torch::Tensor state;
   std::vector<Transition> transitions;

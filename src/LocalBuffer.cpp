@@ -15,10 +15,11 @@ void LocalBuffer::setInferenceParam(int envId, Request &request,
       {0}, transitions[envId].reward.index({0, prevIndex}));
 }
 
-void LocalBuffer::updateAndGetTransition(
-    int envId, Request &request, torch::Tensor &action, torch::Tensor &ih,
-    torch::Tensor &hh, torch::Tensor &q, torch::Tensor &policy,
-    std::vector<ReplayData> *retReplay, std::vector<RetraceQ> *retRetrace) {
+bool LocalBuffer::update(int envId, Request &request, torch::Tensor &action,
+                         torch::Tensor &ih, torch::Tensor &hh, torch::Tensor &q,
+                         torch::Tensor &policy) {
+
+  bool isReturn = false;
 
   prevIndexes[envId] = indexes[envId];
   auto index = indexes[envId];
@@ -83,6 +84,9 @@ void LocalBuffer::updateAndGetTransition(
       std::lock_guard lock(mtx);
       replayList.emplace_back(std::move(replayData));
       qList.emplace_back(std::move(retraceData));
+      if (replayList.size() >= returnSize) {
+        isReturn = true;
+      }
     } else {
       ReplayData replayData = ReplayData(state, 1, SEQ_LENGTH);
       RetraceQ retraceData = RetraceQ(1, SEQ_LENGTH, ACTION_SIZE);
@@ -129,11 +133,18 @@ void LocalBuffer::updateAndGetTransition(
       std::lock_guard lock(mtx);
       replayList.emplace_back(std::move(replayData));
       qList.emplace_back(std::move(retraceData));
+      if (replayList.size() >= returnSize) {
+        isReturn = true;
+      }
     }
   }
 
   indexes[envId] = index;
+  return isReturn;
+}
 
+void LocalBuffer::getTransitions(std::vector<ReplayData> *retReplay,
+                                 std::vector<RetraceQ> *retRetrace) {
   std::lock_guard lock(mtx);
   if (replayList.size() > returnSize) {
     replayList.swap(*retReplay);

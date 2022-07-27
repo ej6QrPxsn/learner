@@ -98,7 +98,9 @@ int Learner::sendAndRecieveActor(int fd_other) {
   char buf[10240];
   Request request;
   int action;
+
   Event event;
+  auto retraceLoop = std::thread(&Learner::retraceLoop, this, std::ref(event));
 
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
@@ -115,7 +117,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
     request.reward = buf[buf_len - 5];
     request.done = buf[buf_len - 1];
 
-    action = inference(task, request);
+    action = inference(task, request, event);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -124,10 +126,8 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(int envId, Request &request) {
+int Learner::inference(int envId, Request &request, Event &event) {
   int action;
-  std::vector<ReplayData> replayDatas;
-  std::vector<RetraceQ> retraceQs;
 
   InferInput inferInput(state, 1, 1);
   localBuffer.setInferenceParam(envId, request, &inferInput);
@@ -159,10 +159,23 @@ int Learner::inference(int envId, Request &request) {
   auto selectAction =
       torch::where(prob < epsThreshold, randomAction, torch::argmax(q, 1));
 
-  localBuffer.updateAndGetTransition(envId, request, selectAction, ih, hh, q,
-                                     policy, &replayDatas, &retraceQs);
+  bool returnTransition =
+      localBuffer.update(envId, request, selectAction, ih, hh, q, policy);
 
-  if (!replayDatas.empty()) {
+  if (returnTransition) {
+    event.set();
+  }
+
+  return selectAction.item<int>();
+}
+
+void Learner::retraceLoop(Event &event) {
+  std::vector<ReplayData> replayDatas;
+  std::vector<RetraceQ> retraceQs;
+  while (1) {
+    event.wait();
+
+    localBuffer.getTransitions(&replayDatas, &retraceQs);
 
     int batchSize = replayDatas.size();
     RetraceData retraceData(batchSize, 1 + TRACE_LENGTH, actionSize);
@@ -174,9 +187,10 @@ int Learner::inference(int envId, Request &request) {
         retraceData.policy, retraceData.onlineQ, retraceData.targetQ));
 
     replay.putReplayQueue(priorities, replayDatas);
-  }
 
-  return selectAction.item<int>();
+    replayDatas.clear();
+    retraceQs.clear();
+  }
 }
 
 void Learner::trainLoop() {

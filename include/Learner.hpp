@@ -23,8 +23,9 @@ public:
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(int envId, Request &request);
+  int inference(int envId, Request &request, Event &event);
   Replay *getReplay() { return &replay; }
+  void retraceLoop(Event &event);
   void trainLoop();
 
 private:
