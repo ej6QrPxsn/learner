@@ -30,9 +30,11 @@ public:
   LocalBuffer(torch::Tensor &_state, int numEnvs, int _returnSize)
       : returnSize(_returnSize), state(_state),
         transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
-        indexes(numEnvs, 0), prevIndexes(numEnvs, 0),
+        indexes(numEnvs, 0),
         replayList(_returnSize, ReplayData(_state, 1, SEQ_LENGTH)),
         qList(_returnSize, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
+        prevAction(numEnvs, torch::zeros({1}, torch::kUInt8)),
+        prevReward(numEnvs, torch::zeros({1}, torch::kFloat32)),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
@@ -55,7 +57,8 @@ private:
   std::vector<ReplayData> replayList;
   std::vector<RetraceQ> qList;
   std::vector<int> indexes;
-  std::vector<int> prevIndexes;
+  std::vector<torch::Tensor> prevAction;
+  std::vector<torch::Tensor> prevReward;
   std::vector<torch::Tensor> prevIh;
   std::vector<torch::Tensor> prevHh;
 };

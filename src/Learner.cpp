@@ -139,10 +139,10 @@ int Learner::inference(int envId, Request &request) {
                                   inferInput.PrevReward);
   }
 
-  auto q = std::get<0>(ret).clone().index({0});
+  auto q = std::get<0>(ret).index({0});
   auto lstmStates = std::get<1>(ret);
-  auto ih = std::get<0>(lstmStates).permute({1, 0, 2}).clone().index({0});
-  auto hh = std::get<1>(lstmStates).permute({1, 0, 2}).clone().index({0});
+  auto ih = std::get<0>(lstmStates).permute({1, 0, 2}).index({0});
+  auto hh = std::get<1>(lstmStates).permute({1, 0, 2}).index({0});
 
   // 選択アクションの確率
   auto policy = std::get<0>(torch::max(torch::softmax(q, 1), 1));
@@ -182,15 +182,17 @@ int Learner::inference(int envId, Request &request) {
 void Learner::trainLoop() {
   int stepsDone = 0;
 
-  torch::optim::Adam optimizer(agent.onlineNet.parameters(),
-                               /*lr=*/LEARNING_RATE);
+  auto optimizer = torch::optim::Adam(
+      agent.onlineNet.parameters(),
+      torch::optim::AdamOptions().lr(LEARNING_RATE).eps(EPSILON));
 
   std::deque<float> lossList;
 
   while (1) {
     auto sampleData = replay.sample();
-    auto indexes = std::get<0>(sampleData);
-    auto data = std::get<1>(sampleData);
+    auto labels = std::get<0>(sampleData);
+    auto indexes = std::get<1>(sampleData);
+    auto data = std::get<2>(sampleData);
 
     // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype()
     // << std::endl; std::cout << "action " << data.action.sizes() << ", " <<
@@ -250,7 +252,7 @@ void Learner::trainLoop() {
     // Update the parameters based on the calculated gradients.
     optimizer.step();
 
-    replay.updatePriorities(indexes, priorities);
+    replay.updatePriorities(labels, indexes, priorities);
 
     // ターゲットネットワーク更新
     if (stepsDone % TARGET_UPDATE == 0) {

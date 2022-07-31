@@ -46,6 +46,18 @@ struct ReplayData {
     policy = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
   }
 
+  ReplayData clone() {
+    ReplayData obj;
+    obj.state = state.detach().clone();
+    obj.action = action.detach().clone();
+    obj.reward = reward.detach().clone();
+    obj.done = done.detach().clone();
+    obj.ih = ih.detach().clone();
+    obj.hh = hh.detach().clone();
+    obj.policy = policy.detach().clone();
+    return std::move(obj);
+  }
+  
   torch::Tensor state;
   torch::Tensor action;
   torch::Tensor reward;
@@ -103,10 +115,9 @@ public:
       : state(state_), actionSize(actionSize_), seqLength(seqLength_) {}
 
   TrainData toBatchedTrainData(std::vector<ReplayData> dataList);
-  void
-  toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
-                       std::vector<RetraceQ> &RetraceQs,
-                       RetraceData *retrace);
+  void toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
+                            std::vector<RetraceQ> &RetraceQs,
+                            RetraceData *retrace);
 
 private:
   int actionSize;

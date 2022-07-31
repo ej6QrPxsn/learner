@@ -5,6 +5,7 @@
 #include "SumTree.hpp"
 #include "Utils.hpp"
 #include <memory>
+#include <mutex>
 #include <random>
 
 class ReplayBuffer {
@@ -13,9 +14,13 @@ public:
 
   int get_count() { return count; }
 
-  void update(int idx, float p) { tree.update(idx, p); }
+  void update(int idx, float p) {
+    std::lock_guard<std::mutex> lock(mtx);
+    tree.update(idx, p);
+  }
 
   void add(float p, ReplayData sample) {
+    std::lock_guard<std::mutex> lock(mtx);
     tree.add(p, sample);
     count += 1;
     if (count < REPLAY_BUFFER_MIN_SIZE) {
@@ -35,6 +40,8 @@ public:
   std::tuple<std::vector<int>, std::vector<ReplayData>> sample(int n) {
     std::vector<int> idx_list;
     std::vector<ReplayData> data_list;
+    std::random_device rd;
+    std::default_random_engine eng(rd());
 
     auto segment = tree.total() / n;
 
@@ -42,8 +49,6 @@ public:
       auto a = segment * i;
       auto b = segment * (i + 1);
 
-      std::random_device rd;
-      std::default_random_engine eng(rd());
       std::uniform_int_distribution<int> distr(a, b);
 
       auto s = distr(eng);
@@ -65,6 +70,7 @@ public:
 private:
   SumTree tree;
   int count;
+  std::mutex mtx;
 };
 
 #endif // REPLAY_BUFFER_HPP

@@ -8,11 +8,8 @@ void LocalBuffer::setInferenceParam(int envId, Request &request,
                                     InferInput *inferData) {
 
   inferData->state.index_put_({0, 0}, request.state / 255.0);
-  auto prevIndex = prevIndexes[envId];
-  inferData->prevAction.index_put_(
-      {0}, transitions[envId].action.index({0, prevIndex}));
-  inferData->PrevReward.index_put_(
-      {0}, transitions[envId].reward.index({0, prevIndex}));
+  inferData->prevAction.index_put_({0}, prevAction[envId].index({0}));
+  inferData->PrevReward.index_put_({0}, prevReward[envId].index({0}));
 }
 
 void LocalBuffer::updateAndGetTransition(
@@ -20,7 +17,9 @@ void LocalBuffer::updateAndGetTransition(
     torch::Tensor &hh, torch::Tensor &q, torch::Tensor &policy,
     std::vector<ReplayData> *retReplay, std::vector<RetraceQ> *retRetrace) {
 
-  prevIndexes[envId] = indexes[envId];
+  prevAction[envId].index_put_({0}, action);
+  prevReward[envId].index_put_({0}, request.reward);
+
   auto index = indexes[envId];
 
   transitions[envId].state.index_put_({0, index}, request.state);
@@ -32,8 +31,8 @@ void LocalBuffer::updateAndGetTransition(
   transitions[envId].q.index_put_({0, index}, q);
   transitions[envId].policy.index_put_({0, index}, policy);
 
-  prevIh[envId] = ih;
-  prevHh[envId] = hh;
+  prevIh[envId] = ih.clone();
+  prevHh[envId] = hh.clone();
 
   index++;
 
@@ -41,6 +40,8 @@ void LocalBuffer::updateAndGetTransition(
     if (request.done) {
       prevIh[envId].index_put_({Slice()}, 0);
       prevIh[envId].index_put_({Slice()}, 0);
+      prevAction[envId].index_put_({0}, 0);
+      prevReward[envId].index_put_({0}, 0);
 
       ReplayData replayData = ReplayData(state, 1, SEQ_LENGTH);
       RetraceQ retraceData = RetraceQ(1, SEQ_LENGTH, ACTION_SIZE);
