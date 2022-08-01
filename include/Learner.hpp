@@ -13,10 +13,9 @@ const auto INVALID_ACTION = 99;
 class Learner {
 public:
   Learner(torch::Tensor state_, int actionSize_, int numEnvs_, int traceLength,
-          int replayPeriod, int returnSize_, int capacity)
+          int replayPeriod, int capacity)
       : numEnvs(numEnvs_), actionSize(actionSize_), agent(actionSize_),
-        returnSize(returnSize_), state(state_),
-        localBuffer(state_, numEnvs, returnSize_),
+        state(state_), localBuffer(state_, numEnvs),
         dataConverter(state_, actionSize_, 1 + replayPeriod + traceLength),
         replay(dataConverter, capacity) {}
 
@@ -29,7 +28,6 @@ public:
 private:
   const int numEnvs;
   const int actionSize;
-  const int returnSize;
 
   Agent agent;
   torch::Tensor state;

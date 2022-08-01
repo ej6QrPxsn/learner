@@ -27,12 +27,12 @@ struct InferInput {
 
 class LocalBuffer {
 public:
-  LocalBuffer(torch::Tensor &_state, int numEnvs, int _returnSize)
-      : returnSize(_returnSize), state(_state),
+  LocalBuffer(torch::Tensor &_state, int numEnvs)
+      : state(_state),
         transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
         indexes(numEnvs, 0),
-        replayList(_returnSize, ReplayData(_state, 1, SEQ_LENGTH)),
-        qList(_returnSize, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
+        replayList(BATCH_SIZE, ReplayData(_state, 1, SEQ_LENGTH)),
+        qList(BATCH_SIZE, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
         prevAction(numEnvs, torch::zeros({1}, torch::kUInt8)),
         prevReward(numEnvs, torch::zeros({1}, torch::kFloat32)),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
@@ -50,8 +50,6 @@ public:
                       std::vector<RetraceQ> *retRetrace);
 
 private:
-  const int returnSize;
-
   torch::Tensor state;
   std::vector<Transition> transitions;
   std::vector<ReplayData> replayList;

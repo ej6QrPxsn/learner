@@ -280,7 +280,7 @@ int main(void) {
   int numEnvs = 16;
 
   Learner learner(stateTensor, actionSize, numEnvs, TRACE_LENGTH, REPLAY_PERIOD,
-                  RETURN_TRANSITION_SIZE, REPLAY_BUFFER_SIZE);
+                  REPLAY_BUFFER_SIZE);
 
   // actorからのリクエスト受付
   auto inferLoop = std::thread(&Learner::listenActor, &learner);

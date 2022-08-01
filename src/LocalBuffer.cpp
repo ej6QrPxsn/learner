@@ -136,7 +136,7 @@ void LocalBuffer::updateAndGetTransition(
   indexes[envId] = index;
 
   std::lock_guard lock(mtx);
-  if (replayList.size() > returnSize) {
+  if (replayList.size() >= BATCH_SIZE) {
     replayList.swap(*retReplay);
     qList.swap(*retRetrace);
   }
