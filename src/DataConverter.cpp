@@ -22,8 +22,7 @@ TrainData DataConverter::toBatchedTrainData(std::vector<ReplayData> dataList) {
 
 void DataConverter::toBatchedRetraceData(std::vector<ReplayData> & replayDatas,
                                          std::vector<RetraceQ> & RetraceQs,
-                                         RetraceData *retrace) {
-  int batchSize = replayDatas.size();
+                                         RetraceData *retrace, int batchSize) {
   for (int i = 0; i < batchSize; i++) {
     retrace->action.index_put_(
         {i}, replayDatas[i].action.index({0, Slice(REPLAY_PERIOD, None)}));

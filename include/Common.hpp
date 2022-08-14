@@ -1,7 +1,9 @@
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
-const auto TARGET_UPDATE = 2500;
+const auto TARGET_UPDATE = 1500;
+const auto ACTOR_UPDATE = 100;
+
 const auto BATCH_SIZE = 64;
 const auto LEARNING_RATE = 1e-4;
 const auto EPSILON = 1e-3;
@@ -27,5 +29,7 @@ const auto REPLAY = 1;
 const auto HIGH_REWARD = 2;
 
 const auto ACTION_SIZE = 9;
+const auto NUM_ENVS = 16;
+
 
 #endif // COMMON_HPP

@@ -1,9 +1,40 @@
 #ifndef MODELS_HPP
 #define MODELS_HPP
 
+#include "Common.hpp"
 #include <regex>
 #include <torch/torch.h>
 #include <type_traits>
+
+struct AgentInput {
+  AgentInput() {}
+  AgentInput(torch::Tensor state_, int batchSize, int seqLength) {
+    auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
+    auto stateShape = state_.sizes();
+    stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
+
+    state = torch::empty(stateSizes, torch::kFloat32);
+    prevAction = torch::empty({batchSize, seqLength}, torch::kLong);
+    prevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
+  }
+
+  torch::Tensor state;
+  torch::Tensor prevAction;
+  torch::Tensor prevReward;
+  torch::Tensor *ih = nullptr;
+  torch::Tensor *hh = nullptr;
+};
+
+struct AgentOutput {
+  AgentOutput(int batch, int seq)
+      : q(torch::empty({batch, seq, ACTION_SIZE}, torch::kFloat32)),
+        ih(torch::empty({batch, 1, 512}, torch::kFloat32)),
+        hh(torch::empty({batch, 1, 512}, torch::kFloat32)) {}
+
+  torch::Tensor ih;
+  torch::Tensor hh;
+  torch::Tensor q;
+};
 
 struct Model : torch::nn::Module {
   void saveStateDict(const std::string &file_name) {
@@ -43,6 +74,30 @@ struct Model : torch::nn::Module {
       }
     }
   }
+
+  void copyFrom(Model & fromModel) {
+    torch::NoGradGuard no_grad;
+
+    auto newParams = fromModel.named_parameters(true /*recurse*/);
+    auto params = this->named_parameters(true /*recurse*/);
+    for (auto &val : newParams) {
+      auto name = val.key();
+      auto *t = params.find(name);
+      if (t != nullptr) {
+        t->copy_(val.value());
+      }
+    }
+
+    auto newBuffers = fromModel.named_buffers(true /*recurse*/);
+    auto buffers = this->named_buffers(true /*recurse*/);
+    for (auto &val : newBuffers) {
+      auto name = val.key();
+      auto *t = buffers.find(name);
+      if (t != nullptr) {
+        t->copy_(val.value());
+      }
+    }
+  }
 };
 
 struct R2D2Agent : Model {
@@ -69,21 +124,13 @@ struct R2D2Agent : Model {
     state2 = register_module("state2", torch::nn::Linear(512, 1));
   }
 
-  std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>
-  forward(torch::Tensor state, torch::Tensor prevAction,
-          torch::Tensor prevReward);
-  std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>
-  forward(torch::Tensor state, torch::Tensor prevAction,
-          torch::Tensor prevReward, torch::Tensor ih, torch::Tensor hh);
+  void forward(AgentInput agentInput, AgentOutput *agentOutput,
+               bool infer = false);
 
 private:
   torch::Tensor forwardConv(torch::Tensor x);
-  std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>
-  forwardLstm(torch::Tensor x, torch::Tensor prevAction,
-              torch::Tensor prevReward);
-  std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>
-  forwardLstm(torch::Tensor x, torch::Tensor prevAction,
-              torch::Tensor prevReward, torch::Tensor ih, torch::Tensor hh);
+  std::tuple<at::Tensor, std::tuple<at::Tensor, at::Tensor>>
+  forwardLstm(AgentInput agentInput);
   torch::Tensor forwardDueling(torch::Tensor x);
 
   int64_t nActions;

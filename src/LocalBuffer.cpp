@@ -5,16 +5,15 @@ using namespace torch::indexing;
 std::mutex mtx;
 
 void LocalBuffer::setInferenceParam(int envId, Request &request,
-                                    InferInput *inferData) {
+                                    AgentInput *inferData) {
 
   inferData->state.index_put_({0, 0}, request.state / 255.0);
   inferData->prevAction.index_put_({0}, prevAction[envId].index({0}));
-  inferData->PrevReward.index_put_({0}, prevReward[envId].index({0}));
+  inferData->prevReward.index_put_({0}, prevReward[envId].index({0}));
 }
 
 void LocalBuffer::updateAndGetTransition(
-    int envId, Request &request, torch::Tensor &action, torch::Tensor &ih,
-    torch::Tensor &hh, torch::Tensor &q, torch::Tensor &policy,
+    int envId, Request &request, torch::Tensor &action, AgentOutput & agentOutput, torch::Tensor &policy,
     std::vector<ReplayData> *retReplay, std::vector<RetraceQ> *retRetrace) {
 
   prevAction[envId].index_put_({0}, action);
@@ -28,11 +27,11 @@ void LocalBuffer::updateAndGetTransition(
   transitions[envId].done.index_put_({0, index}, request.done);
   transitions[envId].ih.index_put_({0, index}, prevIh[envId]);
   transitions[envId].hh.index_put_({0, index}, prevHh[envId]);
-  transitions[envId].q.index_put_({0, index}, q);
+  transitions[envId].q.index_put_({0, index}, agentOutput.q.index({0, 0}));
   transitions[envId].policy.index_put_({0, index}, policy);
 
-  prevIh[envId] = ih.clone();
-  prevHh[envId] = hh.clone();
+  prevIh[envId].index_put_({Slice()}, agentOutput.ih.index({0}));
+  prevHh[envId].index_put_({Slice()}, agentOutput.hh.index({0}));
 
   index++;
 

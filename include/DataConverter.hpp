@@ -117,7 +117,7 @@ public:
   TrainData toBatchedTrainData(std::vector<ReplayData> dataList);
   void toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
                             std::vector<RetraceQ> &RetraceQs,
-                            RetraceData *retrace);
+                            RetraceData *retrace, int batchSize);
 
 private:
   int actionSize;

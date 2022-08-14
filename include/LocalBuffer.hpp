@@ -1,6 +1,7 @@
 #ifndef LOCAL_BUFFER_HPP
 #define LOCAL_BUFFER_HPP
 
+#include "Models.hpp"
 #include "DataConverter.hpp"
 #include "Utils.hpp"
 #include <memory>
@@ -8,40 +9,22 @@
 
 class Request;
 
-struct InferInput {
-  InferInput() {}
-  InferInput(torch::Tensor state_, int batchSize, int seqLength) {
-    auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
-    auto stateShape = state_.sizes();
-    stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
-
-    state = torch::empty(stateSizes, torch::kFloat32);
-    prevAction = torch::empty({batchSize, seqLength}, torch::kLong);
-    PrevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
-  }
-
-  torch::Tensor state;
-  torch::Tensor prevAction;
-  torch::Tensor PrevReward;
-};
-
 class LocalBuffer {
 public:
   LocalBuffer(torch::Tensor &_state, int numEnvs)
       : state(_state),
         transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
         indexes(numEnvs, 0),
-        replayList(BATCH_SIZE, ReplayData(_state, 1, SEQ_LENGTH)),
-        qList(BATCH_SIZE, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
+        replayList(BATCH_SIZE * 2, ReplayData(_state, 1, SEQ_LENGTH)),
+        qList(BATCH_SIZE * 2, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
         prevAction(numEnvs, torch::zeros({1}, torch::kUInt8)),
         prevReward(numEnvs, torch::zeros({1}, torch::kFloat32)),
         prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
         prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
 
-  void setInferenceParam(int envId, Request &request, InferInput *inferData);
+  void setInferenceParam(int envId, Request &request, AgentInput *inferData);
   void updateAndGetTransition(int envId, Request &request,
-                              torch::Tensor &action, torch::Tensor &ih,
-                              torch::Tensor &hh, torch::Tensor &q,
+                              torch::Tensor &action, AgentOutput & agentOutput,
                               torch::Tensor &policy,
                               std::vector<ReplayData> *retReplay,
                               std::vector<RetraceQ> *retRetrace);
