@@ -15,12 +15,10 @@ public:
       : state(_state),
         transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
         indexes(numEnvs, 0),
-        replayList(BATCH_SIZE * 2, ReplayData(_state, 1, SEQ_LENGTH)),
-        qList(BATCH_SIZE * 2, RetraceQ(1, SEQ_LENGTH, ACTION_SIZE)),
         prevAction(numEnvs, torch::zeros({1}, torch::kUInt8)),
         prevReward(numEnvs, torch::zeros({1}, torch::kFloat32)),
-        prevIh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)),
-        prevHh(numEnvs, torch::zeros({1, 512}, torch::kFloat32)) {}
+        prevIh(numEnvs, torch::zeros({512}, torch::kFloat32)),
+        prevHh(numEnvs, torch::zeros({512}, torch::kFloat32)) {}
 
   void setInferenceParam(int envId, Request &request, AgentInput *inferData);
   void updateAndGetTransition(int envId, Request &request,

@@ -12,17 +12,6 @@
 using namespace torch::indexing;
 std::mutex mtx_;
 
-const auto STATE =
-    torch::empty({1, 84, 84}, torch::TensorOptions().dtype(torch::kUInt8));
-
-std::array<std::vector<ReplayData>, NUM_ENVS> gReplayDatas;
-std::array<std::vector<RetraceQ>, NUM_ENVS> gRetraceQs;
-std::vector<AgentInput> gInferInputs(NUM_ENVS, AgentInput(STATE, 1, 1));
-// std::vector<AgentOutput> gInferOutputs(NUM_ENVS, AgentOutput(1, 1));
-std::vector<RetraceData> gRetraceDatas(NUM_ENVS, RetraceData(BATCH_SIZE * 2,
-                                                             1 + TRACE_LENGTH,
-                                                             ACTION_SIZE));
-
 int Learner::listenActor() {
 
   int ret_code = 0;
@@ -108,6 +97,8 @@ int Learner::sendAndRecieveActor(int fd_other) {
   Event event;
   int steps = 0;
 
+  AgentInput inferInput(state, 1, 1);
+
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
   // printf("buf_len = %d\n", buf_len);
@@ -123,7 +114,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
     request.reward = *reinterpret_cast<float *>(&buf[buf_len - 5]);
     request.done = *reinterpret_cast<bool *>(&buf[buf_len - 1]);
 
-    action = inference(task, request);
+    action = inference(task, request, inferInput);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -131,31 +122,24 @@ int Learner::sendAndRecieveActor(int fd_other) {
     }
 
     steps++;
-
-   // アクターネットワーク切り替え
-    if (task == 0 && steps % ACTOR_UPDATE == 0) {
-      inferModelManager.switchUseModel();
-    }
   }
 }
 
-int Learner::inference(int envId, Request &request) {
+int Learner::inference(int envId, Request &request, AgentInput & inferInput) {
   int action;
-  std::vector<ReplayData> &replayDatas = gReplayDatas[envId];
-  std::vector<RetraceQ> &retraceQs = gRetraceQs[envId];
-
-  AgentInput &inferInput = gInferInputs[envId];
-  AgentOutput inferOutput(1, 1);
+  std::vector<ReplayData> replayDatas;
+  std::vector<RetraceQ> retraceQs;
+  AgentOutput agentOutput;
 
   localBuffer.setInferenceParam(envId, request, &inferInput);
 
   {
     c10::InferenceMode guard(true);
-    inferModelManager.getModel().forward(inferInput, &inferOutput, true);
+    agentOutput = agent.onlineNet.forward(inferInput);
   }
 
   // 選択アクションの確率
-  auto policy = torch::amax(torch::softmax(inferOutput.q, 2), 2);
+  auto policy = torch::amax(torch::softmax(agentOutput.q, 2), 2);
 
   // std::cout << "policies: " << policies << std::endl;
 
@@ -164,20 +148,20 @@ int Learner::inference(int envId, Request &request) {
       torch::pow(0.4, torch::linspace(1., 8., numEnvs)).index({envId});
 
   auto randomAction =
-      torch::randint(0, inferOutput.q.size(2), 1).to(torch::kLong);
+      torch::randint(0, agentOutput.q.size(2), 1).to(torch::kLong);
   auto prob = torch::randn(1);
 
   auto selectAction =
-      torch::where(prob < epsThreshold, randomAction, torch::argmax(inferOutput.q, 2));
+      torch::where(prob < epsThreshold, randomAction, torch::argmax(agentOutput.q, 2));
 
-  localBuffer.updateAndGetTransition(envId, request, selectAction, inferOutput,
+  localBuffer.updateAndGetTransition(envId, request, selectAction, agentOutput,
                                      policy, &replayDatas, &retraceQs);
 
   if (!replayDatas.empty()) {
 
-    RetraceData &retraceData = gRetraceDatas[envId];
-
     int returnSize = replayDatas.size();
+    RetraceData retraceData(returnSize, 1 + TRACE_LENGTH, actionSize);
+
     dataConverter.toBatchedRetraceData(replayDatas, retraceQs, &retraceData,
                                        returnSize);
 
@@ -208,10 +192,6 @@ void Learner::trainLoop() {
 
   std::deque<float> lossList;
 
-  AgentOutput output(BATCH_SIZE, REPLAY_PERIOD);
-  AgentOutput onlineOutput(BATCH_SIZE, TRACE_LENGTH);
-  AgentOutput targeOutput(BATCH_SIZE, TRACE_LENGTH);
-
   while (1) {
     auto sampleData = replay.sample();
     auto labels = std::get<0>(sampleData);
@@ -236,8 +216,8 @@ void Learner::trainLoop() {
     input.ih = &data.ih;
     input.hh = &data.hh;
 
-    agent.onlineNet.forward(input, &output);
-    agent.targetNet.forward(input, &output);
+    agent.onlineNet.forward(input);
+    agent.targetNet.forward(input);
 
     input.state = data.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
     input.prevAction = data.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
@@ -245,8 +225,8 @@ void Learner::trainLoop() {
     input.ih = nullptr;
     input.hh = nullptr;
 
-    agent.onlineNet.forward(input, &onlineOutput);
-    agent.targetNet.forward(input, &targeOutput);
+    auto onlineRet = agent.onlineNet.forward(input);
+    auto targetRet = agent.targetNet.forward(input);
 
     auto retraceRet = retraceLoss(
         data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
@@ -255,7 +235,7 @@ void Learner::trainLoop() {
             .squeeze(-1),
         data.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         data.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        onlineOutput.q, targeOutput.q);
+        onlineRet.q, targetRet.q);
 
     auto losses = std::get<0>(retraceRet);
     auto priorities = std::get<1>(retraceRet);
@@ -275,9 +255,6 @@ void Learner::trainLoop() {
     optimizer.step();
 
     replay.updatePriorities(labels, indexes, priorities);
-
-    // 推論ネットワークのパラメータ更新
-    inferModelManager.setModelParams(agent.onlineNet);
 
     // ターゲットネットワーク更新
     if (stepsDone % TARGET_UPDATE == 0) {

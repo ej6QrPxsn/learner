@@ -71,8 +71,8 @@ struct Transition : ReplayData {
   Transition() {}
   Transition(torch::Tensor state_, int batchSize, int seqLength, int actionSize)
       : ReplayData(state_, batchSize, seqLength) {
-    ih = torch::empty({batchSize, seqLength, 1, 512}, torch::kFloat32);
-    hh = torch::empty({batchSize, seqLength, 1, 512}, torch::kFloat32);
+    ih = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
+    hh = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
     q = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
   }
 

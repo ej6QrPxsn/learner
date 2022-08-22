@@ -12,9 +12,12 @@ void LocalBuffer::setInferenceParam(int envId, Request &request,
   inferData->prevReward.index_put_({0}, prevReward[envId].index({0}));
 }
 
-void LocalBuffer::updateAndGetTransition(
-    int envId, Request &request, torch::Tensor &action, AgentOutput & agentOutput, torch::Tensor &policy,
-    std::vector<ReplayData> *retReplay, std::vector<RetraceQ> *retRetrace) {
+void LocalBuffer::updateAndGetTransition(int envId, Request &request,
+                                         torch::Tensor &action,
+                                         AgentOutput &agentOutput,
+                                         torch::Tensor &policy,
+                                         std::vector<ReplayData> *retReplay,
+                                         std::vector<RetraceQ> *retRetrace) {
 
   prevAction[envId].index_put_({0}, action);
   prevReward[envId].index_put_({0}, request.reward);
@@ -30,8 +33,9 @@ void LocalBuffer::updateAndGetTransition(
   transitions[envId].q.index_put_({0, index}, agentOutput.q.index({0, 0}));
   transitions[envId].policy.index_put_({0, index}, policy);
 
-  prevIh[envId].index_put_({Slice()}, agentOutput.ih.index({0}));
-  prevHh[envId].index_put_({Slice()}, agentOutput.hh.index({0}));
+  // value <- batch(1), seq(1), value
+  prevIh[envId].index_put_({Slice()}, agentOutput.ih.index({0, 0}));
+  prevHh[envId].index_put_({Slice()}, agentOutput.hh.index({0, 0}));
 
   index++;
 

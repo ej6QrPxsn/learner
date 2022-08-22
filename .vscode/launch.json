@@ -26,6 +26,15 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "RelDebug",
+            "program": "${workspaceFolder}/build/learner",
+            "args": [],
+            "preLaunchTask": "RelDebug My Build",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Release",
             "program": "${workspaceFolder}/build/learner",
             "args": [],

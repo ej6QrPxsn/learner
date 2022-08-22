@@ -68,6 +68,7 @@
         "numbers": "cpp",
         "semaphore": "cpp",
         "stop_token": "cpp",
-        "future": "cpp"
+        "future": "cpp",
+        "codecvt": "cpp"
     }
 }

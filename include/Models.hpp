@@ -6,6 +6,9 @@
 #include <torch/torch.h>
 #include <type_traits>
 
+using LstmOutput =
+    std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>;
+
 struct AgentInput {
   AgentInput() {}
   AgentInput(torch::Tensor state_, int batchSize, int seqLength) {
@@ -26,11 +29,6 @@ struct AgentInput {
 };
 
 struct AgentOutput {
-  AgentOutput(int batch, int seq)
-      : q(torch::empty({batch, seq, ACTION_SIZE}, torch::kFloat32)),
-        ih(torch::empty({batch, 1, 512}, torch::kFloat32)),
-        hh(torch::empty({batch, 1, 512}, torch::kFloat32)) {}
-
   torch::Tensor ih;
   torch::Tensor hh;
   torch::Tensor q;
@@ -75,7 +73,7 @@ struct Model : torch::nn::Module {
     }
   }
 
-  void copyFrom(Model & fromModel) {
+  void copyFrom(Model &fromModel) {
     torch::NoGradGuard no_grad;
 
     auto newParams = fromModel.named_parameters(true /*recurse*/);
@@ -124,13 +122,11 @@ struct R2D2Agent : Model {
     state2 = register_module("state2", torch::nn::Linear(512, 1));
   }
 
-  void forward(AgentInput agentInput, AgentOutput *agentOutput,
-               bool infer = false);
+  AgentOutput forward(AgentInput &agentInput);
 
 private:
   torch::Tensor forwardConv(torch::Tensor x);
-  std::tuple<at::Tensor, std::tuple<at::Tensor, at::Tensor>>
-  forwardLstm(AgentInput agentInput);
+  AgentOutput forwardLstm(torch::Tensor x, AgentInput &agentInput);
   torch::Tensor forwardDueling(torch::Tensor x);
 
   int64_t nActions;
