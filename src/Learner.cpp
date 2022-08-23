@@ -97,7 +97,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
   Event event;
   int steps = 0;
 
-  AgentInput inferInput(state, 1, 1);
+  AgentInput agentInput(state, 1, 1);
 
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
@@ -114,7 +114,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
     request.reward = *reinterpret_cast<float *>(&buf[buf_len - 5]);
     request.done = *reinterpret_cast<bool *>(&buf[buf_len - 1]);
 
-    action = inference(task, request, inferInput);
+    action = inference(task, request, agentInput);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -125,17 +125,17 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(int envId, Request &request, AgentInput & inferInput) {
+int Learner::inference(int envId, Request &request, AgentInput & agentInput) {
   int action;
   std::vector<ReplayData> replayDatas;
   std::vector<RetraceQ> retraceQs;
   AgentOutput agentOutput;
 
-  localBuffer.setInferenceParam(envId, request, &inferInput);
+  localBuffer.setInferenceParam(envId, request, &agentInput);
 
   {
     c10::InferenceMode guard(true);
-    agentOutput = agent.onlineNet.forward(inferInput);
+    agentOutput = agent.onlineNet.forward(agentInput);
   }
 
   // 選択アクションの確率

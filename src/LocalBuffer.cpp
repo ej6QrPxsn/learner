@@ -46,41 +46,70 @@ void LocalBuffer::updateAndGetTransition(int envId, Request &request,
       prevAction[envId].index_put_({0}, 0);
       prevReward[envId].index_put_({0}, 0);
 
-      ReplayData replayData = ReplayData(state, 1, SEQ_LENGTH);
-      RetraceQ retraceData = RetraceQ(1, SEQ_LENGTH, ACTION_SIZE);
+      ReplayData replayData;
+      RetraceQ retraceData;
 
       if (index > REPLAY_PERIOD + 1) {
         // 現在位置までコピー
-        replayData.state.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].state.index({0, Slice(None, index)}));
-        replayData.action.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].action.index({0, Slice(None, index)}));
-        replayData.reward.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].reward.index({0, Slice(None, index)}));
-        replayData.done.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].done.index({0, Slice(None, index)}));
-        replayData.policy.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].policy.index({0, Slice(None, index)}));
-        retraceData.onlineQ.index_put_(
-            {0, Slice(None, index)},
-            transitions[envId].q.index({0, Slice(None, index)}));
+        memcpy(replayData.state,
+               transitions[envId]
+                   .state.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<uint8_t>(),
+               index * STATE_SIZE * sizeof(uint8_t));
+        memcpy(replayData.action,
+               transitions[envId]
+                   .action.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<uint8_t>(),
+               index * sizeof(uint8_t));
+        memcpy(replayData.reward,
+               transitions[envId]
+                   .reward.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<float>(),
+               index * sizeof(float));
+        memcpy(replayData.done,
+               transitions[envId]
+                   .done.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<bool>(),
+               index * sizeof(bool));
+        memcpy(replayData.policy,
+               transitions[envId]
+                   .policy.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<float>(),
+               index * sizeof(float));
+        memcpy(retraceData.onlineQ,
+               transitions[envId]
+                   .q.index({0, Slice(None, index)})
+                   .contiguous()
+                   .data_ptr<float>(),
+               index * ACTION_SIZE * sizeof(float));
 
         // lstm状態はシークなし
-        replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
-        replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
+        memcpy(
+            replayData.ih,
+            transitions[envId].ih.index({0, 1}).contiguous().data_ptr<float>(),
+            LSTM_STATE_SIZE * sizeof(float));
+        memcpy(
+            replayData.hh,
+            transitions[envId].hh.index({0, 1}).contiguous().data_ptr<float>(),
+            LSTM_STATE_SIZE * sizeof(float));
 
         // 現在地以降は0
-        replayData.state.index_put_({0, Slice(index, None)}, 0);
-        replayData.action.index_put_({0, Slice(index, None)}, 0);
-        replayData.reward.index_put_({0, Slice(index, None)}, 0);
-        replayData.done.index_put_({0, Slice(index, None)}, 0);
-        replayData.policy.index_put_({0, Slice(index, None)}, 0);
-        retraceData.onlineQ.index_put_({0, Slice(index, None)}, 0);
+        memset(replayData.state + index, 0,
+               (SEQ_LENGTH - index) * STATE_SIZE * sizeof(uint8_t));
+        memset(replayData.action + index, 0,
+               (SEQ_LENGTH - index) * sizeof(uint8_t));
+        memset(replayData.reward + index, 0,
+               (SEQ_LENGTH - index) * sizeof(float));
+        memset(replayData.done + index, 0, (SEQ_LENGTH - index) * sizeof(bool));
+        memset(replayData.policy + index, 0,
+               (SEQ_LENGTH - index) * sizeof(float));
+        memset(retraceData.onlineQ + index, 0,
+               (SEQ_LENGTH - index) * ACTION_SIZE * sizeof(float));
       }
       index = 0;
 
@@ -88,19 +117,35 @@ void LocalBuffer::updateAndGetTransition(int envId, Request &request,
       replayList.emplace_back(std::move(replayData));
       qList.emplace_back(std::move(retraceData));
     } else {
-      ReplayData replayData = ReplayData(state, 1, SEQ_LENGTH);
-      RetraceQ retraceData = RetraceQ(1, SEQ_LENGTH, ACTION_SIZE);
+      ReplayData replayData;
+      RetraceQ retraceData;
 
-      replayData.state = transitions[envId].state.clone();
-      replayData.action = transitions[envId].action.clone();
-      replayData.reward = transitions[envId].reward.clone();
-      replayData.done = transitions[envId].done.clone();
-      replayData.policy = transitions[envId].policy.clone();
-      retraceData.onlineQ = transitions[envId].q.clone();
+      memcpy(replayData.state,
+             transitions[envId].state.contiguous().data_ptr<uint8_t>(),
+             SEQ_LENGTH * STATE_SIZE * sizeof(uint8_t));
+      memcpy(replayData.action,
+             transitions[envId].action.contiguous().data_ptr<uint8_t>(),
+             SEQ_LENGTH * sizeof(uint8_t));
+      memcpy(replayData.reward,
+             transitions[envId].reward.contiguous().data_ptr<float>(),
+             SEQ_LENGTH * sizeof(float));
+      memcpy(replayData.done,
+             transitions[envId].done.contiguous().data_ptr<bool>(),
+             SEQ_LENGTH * sizeof(bool));
+      memcpy(replayData.policy,
+             transitions[envId].policy.contiguous().data_ptr<float>(),
+             SEQ_LENGTH * sizeof(float));
+      memcpy(retraceData.onlineQ,
+             transitions[envId].q.contiguous().data_ptr<float>(),
+             SEQ_LENGTH * ACTION_SIZE * sizeof(float));
 
       // lstm状態はシークなし
-      replayData.ih.index_put_({0}, transitions[envId].ih.index({0, 1}));
-      replayData.hh.index_put_({0}, transitions[envId].hh.index({0, 1}));
+      memcpy(replayData.ih,
+             transitions[envId].ih.index({0, 1}).contiguous().data_ptr<float>(),
+             LSTM_STATE_SIZE * sizeof(float));
+      memcpy(replayData.hh,
+             transitions[envId].hh.index({0, 1}).contiguous().data_ptr<float>(),
+             LSTM_STATE_SIZE * sizeof(float));
 
       index = 1 + REPLAY_PERIOD;
 

@@ -56,13 +56,13 @@ public:
     auto dataList = std::get<1>(queueData);
 
     for (int i = 0; i < dataList.size(); i++) {
-      replayBuffer.add(priorities.index({i}).item<float>(), dataList[i].clone());
+      replayBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
 
       // 遷移の報酬が高報酬リストの平均よりも高いなら、高報酬バッファに遷移を入れる
-      auto rewards = torch::sum(dataList[i].reward).item<float>();
+      auto rewards = std::accumulate(dataList[i].reward, dataList[i].reward + SEQ_LENGTH, 0.0);
       const auto ave = std::accumulate(std::begin(highRewards), std::end(highRewards), 0.0) / std::size(highRewards);
       if (rewards > ave) {
-        highRewardBuffer.add(priorities.index({i}).item<float>(), dataList[i].clone());
+        highRewardBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
 
         // 高報酬リストの最小値を新しい報酬で置き換える
         auto minIter = min_element(highRewards.begin(), highRewards.end());

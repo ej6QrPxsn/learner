@@ -2,6 +2,7 @@
 #define DATA_CONVERTER_HPP
 
 #include <torch/torch.h>
+#include "Common.hpp"
 
 using namespace torch::indexing;
 
@@ -32,7 +33,25 @@ struct TrainData {
 
 struct ReplayData {
   ReplayData() {}
-  ReplayData(torch::Tensor state_, int batchSize, int seqLength) {
+  uint8_t state[SEQ_LENGTH * STATE_SIZE];
+  uint8_t action[SEQ_LENGTH];
+  float reward[SEQ_LENGTH];
+  bool done[SEQ_LENGTH];
+  float ih[LSTM_STATE_SIZE];
+  float hh[LSTM_STATE_SIZE];
+  float policy[SEQ_LENGTH];
+};
+
+struct RetraceQ {
+  RetraceQ() {}
+  float onlineQ[SEQ_LENGTH * ACTION_SIZE];
+};
+
+
+struct Transition : ReplayData {
+  Transition() {}
+  Transition(torch::Tensor state_, int batchSize, int seqLength,
+             int actionSize) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
@@ -41,23 +60,13 @@ struct ReplayData {
     action = torch::empty({batchSize, seqLength, 1}, torch::kUInt8);
     reward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
     done = torch::empty({batchSize, seqLength, 1}, torch::kBool);
-    ih = torch::empty({batchSize, 1, 512}, torch::kFloat32);
-    hh = torch::empty({batchSize, 1, 512}, torch::kFloat32);
     policy = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
+
+    ih = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
+    hh = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
+    q = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
   }
 
-  ReplayData clone() {
-    ReplayData obj;
-    obj.state = state.detach().clone();
-    obj.action = action.detach().clone();
-    obj.reward = reward.detach().clone();
-    obj.done = done.detach().clone();
-    obj.ih = ih.detach().clone();
-    obj.hh = hh.detach().clone();
-    obj.policy = policy.detach().clone();
-    return std::move(obj);
-  }
-  
   torch::Tensor state;
   torch::Tensor action;
   torch::Tensor reward;
@@ -65,19 +74,6 @@ struct ReplayData {
   torch::Tensor ih;
   torch::Tensor hh;
   torch::Tensor policy;
-};
-
-struct Transition : ReplayData {
-  Transition() {}
-  Transition(torch::Tensor state_, int batchSize, int seqLength, int actionSize)
-      : ReplayData(state_, batchSize, seqLength) {
-    ih = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
-    hh = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
-    q = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
-  }
-
-  torch::Tensor ih;
-  torch::Tensor hh;
   torch::Tensor q;
 };
 
@@ -98,15 +94,6 @@ struct RetraceData {
   torch::Tensor policy;
   torch::Tensor onlineQ;
   torch::Tensor targetQ;
-};
-
-struct RetraceQ {
-  RetraceQ() {}
-  RetraceQ(int batchSize, int seqLength, int actionSize) {
-    onlineQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
-  }
-
-  torch::Tensor onlineQ;
 };
 
 class DataConverter {
