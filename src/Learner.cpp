@@ -193,10 +193,7 @@ void Learner::trainLoop() {
   std::deque<float> lossList;
 
   while (1) {
-    auto sampleData = replay.sample();
-    auto labels = std::get<0>(sampleData);
-    auto indexes = std::get<1>(sampleData);
-    auto data = std::get<2>(sampleData);
+    auto [labels, indexes, data] = replay.sample();
 
     // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype()
     // << std::endl; std::cout << "action " << data.action.sizes() << ", " <<
@@ -228,7 +225,7 @@ void Learner::trainLoop() {
     auto onlineRet = agent.onlineNet.forward(input);
     auto targetRet = agent.targetNet.forward(input);
 
-    auto retraceRet = retraceLoss(
+    auto [losses, priorities] = retraceLoss(
         data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
             .unsqueeze(2),
         data.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
@@ -236,9 +233,6 @@ void Learner::trainLoop() {
         data.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         data.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         onlineRet.q, targetRet.q);
-
-    auto losses = std::get<0>(retraceRet);
-    auto priorities = std::get<1>(retraceRet);
 
     auto loss = torch::mean(losses);
     auto lossValue = loss.item<float>();

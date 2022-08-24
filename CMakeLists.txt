@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 project(learner)
 
-set(LIBTORCH_DIR $ENV{HOME}/libtorch)
+set(LIBTORCH_DIR $ENV{HOME}/dev/libtorch)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 
 find_package(Torch REQUIRED)

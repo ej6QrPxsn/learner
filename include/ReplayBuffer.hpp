@@ -21,7 +21,7 @@ public:
 
   void add(float p, ReplayData sample) {
     std::lock_guard<std::mutex> lock(mtx);
-    tree.add(p, sample);
+    tree.add(p, compress(sample));
     count += 1;
     if (count < REPLAY_BUFFER_MIN_SIZE) {
       if (count % REPLAY_BUFFER_ADD_PRINT_SIZE == 0) {
@@ -61,7 +61,7 @@ public:
 
       //(idx, p, data)
       idx_list.emplace_back(index);
-      data_list.emplace_back(data);
+      data_list.emplace_back(decompress(data));
     }
 
     return {idx_list, data_list};

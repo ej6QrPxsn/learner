@@ -4,6 +4,8 @@
 #include <vector>
 #include "Utils.hpp"
 
+using StoredData = std::string;
+
 class SumTree
 {
 public:
@@ -20,7 +22,7 @@ public:
     return tree[0];
   }
 
-  void add(float p, ReplayData data_)
+  void add(float p, StoredData data_)
   {
     auto idx = write + capacity - 1;
 
@@ -42,7 +44,7 @@ public:
     propagate(idx, change);
   }
 
-  std::tuple<int, float, ReplayData> get(float s)
+  std::tuple<int, float, StoredData> get(float s)
   {
     auto idx = retrieve(0, s);
     auto dataIdx = idx - capacity + 1;
@@ -85,7 +87,7 @@ private:
   int capacity;
   int write;
   std::vector<float> tree;
-  std::vector<ReplayData> data;
+  std::vector<StoredData> data;
 };
 
 #endif // SUM_TREE_HPP

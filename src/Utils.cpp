@@ -1,5 +1,6 @@
 #include "Utils.hpp"
 #include "Common.hpp"
+#include "DataConverter.hpp"
 
 using namespace torch::indexing;
 
@@ -131,4 +132,17 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   // std::cout << "losses: " << losses.sizes() << std::endl;
 
   return std::make_tuple(losses, priorities);
+}
+
+StoredData compress(ReplayData & replayData) {
+  StoredData str;
+  str.resize(sizeof(ReplayData));
+  memcpy(str.data(), &replayData, sizeof(ReplayData));
+  return str;
+}
+
+ReplayData decompress(StoredData & storedData) {
+  ReplayData replayData;
+  memcpy(&replayData, storedData.data(), sizeof(ReplayData));
+  return std::move(replayData);
 }
