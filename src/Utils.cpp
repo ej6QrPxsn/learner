@@ -135,14 +135,15 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
 }
 
 StoredData compress(ReplayData & replayData) {
-  StoredData str;
-  str.resize(sizeof(ReplayData));
-  memcpy(str.data(), &replayData, sizeof(ReplayData));
-  return str;
+  StoredData data;
+  data.size = sizeof(ReplayData);
+  data.ptr = std::unique_ptr<char[]>(new char[sizeof(ReplayData)]);
+  memcpy(data.ptr.get(), &replayData, sizeof(ReplayData));
+  return std::move(data);
 }
 
 ReplayData decompress(StoredData & storedData) {
   ReplayData replayData;
-  memcpy(&replayData, storedData.data(), sizeof(ReplayData));
+  memcpy(&replayData, storedData.ptr.get(), sizeof(ReplayData));
   return std::move(replayData);
 }

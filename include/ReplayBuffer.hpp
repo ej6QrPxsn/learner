@@ -57,7 +57,7 @@ public:
       }
       auto ret = tree.get(s);
       auto index = std::get<0>(ret);
-      auto data = std::get<2>(ret);
+      auto & data = std::get<1>(ret);
 
       //(idx, p, data)
       idx_list.emplace_back(index);

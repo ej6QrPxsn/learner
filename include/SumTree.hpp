@@ -4,7 +4,10 @@
 #include <vector>
 #include "Utils.hpp"
 
-using StoredData = std::string;
+struct StoredData {
+  int size;
+  std::unique_ptr<char[]> ptr;
+};
 
 class SumTree
 {
@@ -44,11 +47,11 @@ public:
     propagate(idx, change);
   }
 
-  std::tuple<int, float, StoredData> get(float s)
+  std::tuple<int, StoredData&> get(float s)
   {
     auto idx = retrieve(0, s);
     auto dataIdx = idx - capacity + 1;
-    return std::make_tuple(idx, tree[idx], data[dataIdx]);
+    return {idx, data[dataIdx]};
   }
 
 private:
