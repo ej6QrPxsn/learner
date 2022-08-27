@@ -1,38 +1,10 @@
 #ifndef MODELS_HPP
 #define MODELS_HPP
 
-#include "Common.hpp"
 #include <regex>
 #include <torch/torch.h>
 #include <type_traits>
-
-using LstmOutput =
-    std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>;
-
-struct AgentInput {
-  AgentInput() {}
-  AgentInput(torch::Tensor state_, int batchSize, int seqLength) {
-    auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
-    auto stateShape = state_.sizes();
-    stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
-
-    state = torch::empty(stateSizes, torch::kFloat32);
-    prevAction = torch::empty({batchSize, seqLength}, torch::kLong);
-    prevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
-  }
-
-  torch::Tensor state;
-  torch::Tensor prevAction;
-  torch::Tensor prevReward;
-  torch::Tensor *ih = nullptr;
-  torch::Tensor *hh = nullptr;
-};
-
-struct AgentOutput {
-  torch::Tensor ih;
-  torch::Tensor hh;
-  torch::Tensor q;
-};
+#include "StructuredData.hpp"
 
 struct Model : torch::nn::Module {
   void saveStateDict(const std::string &file_name) {
@@ -126,7 +98,8 @@ struct R2D2Agent : Model {
 
 private:
   torch::Tensor forwardConv(torch::Tensor x);
-  AgentOutput forwardLstm(torch::Tensor x, AgentInput &agentInput);
+  torch::Tensor forwardLstm(torch::Tensor x, AgentInput &agentInput,
+                            AgentOutput *output);
   torch::Tensor forwardDueling(torch::Tensor x);
 
   int64_t nActions;

@@ -5,9 +5,8 @@
 #include <deque>
 #include <future>
 #include <mutex>
-#include <random>
 #include <numeric>
-
+#include <random>
 
 class Replay {
 public:
@@ -22,7 +21,7 @@ public:
         std::thread(&Replay::addLoop, this, std::move(bufferNotification));
   }
 
-  void updatePriorities(std::vector<int> labels, std::vector<int> indexes,
+  void updatePriorities(std::array<int, BATCH_SIZE> labels, std::array<int, BATCH_SIZE> indexes,
                         torch::Tensor priorities) {
     for (int i = 0; i < indexes.size(); i++) {
       if (labels[i] == REPLAY) {
@@ -59,8 +58,11 @@ public:
       replayBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
 
       // 遷移の報酬が高報酬リストの平均よりも高いなら、高報酬バッファに遷移を入れる
-      auto rewards = std::accumulate(dataList[i].reward, dataList[i].reward + SEQ_LENGTH, 0.0);
-      const auto ave = std::accumulate(std::begin(highRewards), std::end(highRewards), 0.0) / std::size(highRewards);
+      auto rewards = std::accumulate(dataList[i].reward,
+                                     dataList[i].reward + SEQ_LENGTH, 0.0);
+      const auto ave =
+          std::accumulate(std::begin(highRewards), std::end(highRewards), 0.0) /
+          std::size(highRewards);
       if (rewards > ave) {
         highRewardBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
 
@@ -83,7 +85,7 @@ public:
     }
   }
 
-  auto getSample() {
+  void getSample(SampleData &sampleData) {
     int highRewardCount = 0;
     for (int i = 0; i < BATCH_SIZE; i++) {
       auto rand = dist(engine);
@@ -91,40 +93,26 @@ public:
         highRewardCount++;
       }
     }
-    auto replay_count = BATCH_SIZE - highRewardCount;
+    auto replayCount = BATCH_SIZE - highRewardCount;
 
-    std::vector<ReplayData> dataList;
-    std::vector<int> indexList;
-    std::vector<int> labelList;
+    if (replayCount > 0) {
+      replayBuffer.sample(replayCount, sampleData, 0);
+      sampleData.labelList.fill(REPLAY);
+    }
 
     if (highRewardCount > 0) {
-      auto sample = replayBuffer.sample(highRewardCount);
-      auto indexes = std::get<0>(sample);
-      indexList.insert(indexList.end(), indexes.begin(), indexes.end());
-      auto data = std::get<1>(sample);
-      dataList.insert(dataList.end(), data.begin(), data.end());
-      auto label = std::vector<int>(highRewardCount, HIGH_REWARD);
-      labelList.insert(labelList.end(), label.begin(), label.end());
+      highRewardBuffer.sample(highRewardCount, sampleData, replayCount);
+      for(int i = replayCount; i < BATCH_SIZE; i++) {
+        sampleData.labelList[i] = HIGH_REWARD;
+      }
     }
 
-    if (replay_count > 0) {
-      auto sample = replayBuffer.sample(replay_count);
-      auto indexes = std::get<0>(sample);
-      indexList.insert(indexList.end(), indexes.begin(), indexes.end());
-      auto data = std::get<1>(sample);
-      dataList.insert(dataList.end(), data.begin(), data.end());
-      auto label = std::vector<int>(replay_count, REPLAY);
-      labelList.insert(labelList.end(), label.begin(), label.end());
-    }
-
-    auto data = dataConverter.toBatchedTrainData(dataList);
-    return std::make_tuple(labelList, indexList, data);
   }
 
-  auto sample() {
+  void sample(SampleData &sampleData) {
     ReplayDataFuture.wait();
 
-    return getSample();
+    getSample(sampleData);
   }
 
   std::random_device rnd;
@@ -145,7 +133,6 @@ public:
   std::mutex sampleMtx;
   std::condition_variable sampleCond;
   bool isSample = false;
-  std::tuple<std::vector<int>, std::vector<int>, TrainData> sampleData;
 };
 
 #endif // REPLAY_HPP

@@ -94,7 +94,6 @@ int Learner::sendAndRecieveActor(int fd_other) {
   char buf[10240];
   Request request;
   int action;
-  Event event;
   int steps = 0;
 
   AgentInput agentInput(state, 1, 1);
@@ -125,7 +124,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(int envId, Request &request, AgentInput & agentInput) {
+int Learner::inference(int envId, Request &request, AgentInput &agentInput) {
   int action;
   std::vector<ReplayData> replayDatas;
   std::vector<RetraceQ> retraceQs;
@@ -151,8 +150,8 @@ int Learner::inference(int envId, Request &request, AgentInput & agentInput) {
       torch::randint(0, agentOutput.q.size(2), 1).to(torch::kLong);
   auto prob = torch::randn(1);
 
-  auto selectAction =
-      torch::where(prob < epsThreshold, randomAction, torch::argmax(agentOutput.q, 2));
+  auto selectAction = torch::where(prob < epsThreshold, randomAction,
+                                   torch::argmax(agentOutput.q, 2));
 
   localBuffer.updateAndGetTransition(envId, request, selectAction, agentOutput,
                                      policy, &replayDatas, &retraceQs);
@@ -165,13 +164,13 @@ int Learner::inference(int envId, Request &request, AgentInput & agentInput) {
     dataConverter.toBatchedRetraceData(replayDatas, retraceQs, &retraceData,
                                        returnSize);
 
-    auto priorities = std::get<1>(
-        retraceLoss(retraceData.action.index({Slice(None, returnSize)}),
-                    retraceData.reward.index({Slice(None, returnSize)}),
-                    retraceData.done.index({Slice(None, returnSize)}),
-                    retraceData.policy.index({Slice(None, returnSize)}),
-                    retraceData.onlineQ.index({Slice(None, returnSize)}),
-                    retraceData.targetQ.index({Slice(None, returnSize)})));
+    auto priorities = std::get<1>(retraceLoss(
+        retraceData.action.index({Slice(None, returnSize)}),
+        retraceData.reward.index({Slice(None, returnSize)}),
+        retraceData.done.index({Slice(None, returnSize)}),
+        retraceData.policy.index({Slice(None, returnSize)}),
+        retraceData.onlineQ.index({Slice(None, returnSize)}),
+        retraceData.targetQ.index({Slice(None, returnSize)})));
 
     replay.putReplayQueue(priorities, replayDatas);
     replayDatas.clear();
@@ -180,6 +179,8 @@ int Learner::inference(int envId, Request &request, AgentInput & agentInput) {
 
   return selectAction.item<int>();
 }
+
+SampleData sampleData;
 
 void Learner::trainLoop() {
   int stepsDone = 0;
@@ -191,9 +192,11 @@ void Learner::trainLoop() {
       torch::optim::AdamOptions().lr(LEARNING_RATE).eps(EPSILON));
 
   std::deque<float> lossList;
+  TrainData trainData(state, BATCH_SIZE, SEQ_LENGTH);
 
   while (1) {
-    auto [labels, indexes, data] = replay.sample();
+    replay.sample(sampleData);
+    dataConverter.toBatchedTrainData(trainData, sampleData.dataList);
 
     // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype()
     // << std::endl; std::cout << "action " << data.action.sizes() << ", " <<
@@ -207,48 +210,39 @@ void Learner::trainLoop() {
 
     AgentInput input;
 
-    input.state = data.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)});
-    input.prevAction = data.action.index({Slice(), Slice(0, REPLAY_PERIOD)});
-    input.prevReward = data.reward.index({Slice(), Slice(0, REPLAY_PERIOD)});
-    input.ih = &data.ih;
-    input.hh = &data.hh;
+    input.state = trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)});
+    input.prevAction = trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)});
+    input.prevReward = trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)});
+    input.ih = &trainData.ih;
+    input.hh = &trainData.hh;
 
     agent.onlineNet.forward(input);
     agent.targetNet.forward(input);
 
-    input.state = data.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
-    input.prevAction = data.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
-    input.prevReward = data.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)});
+    input.state = trainData.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
+    input.prevAction = trainData.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
+    input.prevReward = trainData.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)});
     input.ih = nullptr;
     input.hh = nullptr;
 
     auto onlineRet = agent.onlineNet.forward(input);
     auto targetRet = agent.targetNet.forward(input);
 
-    auto [losses, priorities] = retraceLoss(
-        data.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
+    auto [lossValue, priorities] = retraceLoss(
+        trainData.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
             .unsqueeze(2),
-        data.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
+        trainData.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
             .squeeze(-1),
-        data.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        data.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        onlineRet.q, targetRet.q);
-
-    auto loss = torch::mean(losses);
-    auto lossValue = loss.item<float>();
+        trainData.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        trainData.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
+        std::move(onlineRet.q), std::move(targetRet.q), &optimizer);
+    
     lossList.push_back(lossValue);
     if (lossList.size() > 100) {
       lossList.pop_front();
     }
 
-    // Reset gradients.
-    optimizer.zero_grad();
-    // Compute gradients of the loss w.r.t. the parameters of our model.
-    loss.backward();
-    // Update the parameters based on the calculated gradients.
-    optimizer.step();
-
-    replay.updatePriorities(labels, indexes, priorities);
+    replay.updatePriorities(sampleData.labelList, sampleData.indexList, priorities);
 
     // ターゲットネットワーク更新
     if (stepsDone % TARGET_UPDATE == 0) {

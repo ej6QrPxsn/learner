@@ -14,16 +14,16 @@ const auto SEQ_LENGTH = 1 + REPLAY_PERIOD + TRACE_LENGTH;
 
 const auto MAX_REPLAY_QUEUE_SIZE = 128;
 const auto REPLAY_BUFFER_ADD_PRINT_SIZE = 500;
-const auto REPLAY_BUFFER_MIN_SIZE = 2500;
-const auto REPLAY_BUFFER_SIZE = 50000;
+const auto REPLAY_BUFFER_MIN_SIZE = 25000;
+const auto REPLAY_BUFFER_SIZE = 5e6;
 
 const auto RETRACE_LAMBDA = 0.95;
 const auto RESCALING_EPSILON = 1e-3;
 const auto ETA = 0.9;
 const auto DISCOUNT_GAMMA = 0.997;
 
-const auto HIGH_REWARD_BUFFER_SIZE = 100;
-const auto HIGH_REWARD_SIZE = 10;
+const auto HIGH_REWARD_BUFFER_SIZE = 1000;
+const auto HIGH_REWARD_SIZE = 100;
 const auto HIGH_REWARD_RATIO = 1. / 256.;
 const auto REPLAY = 1;
 const auto HIGH_REWARD = 2;

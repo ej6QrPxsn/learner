@@ -4,6 +4,9 @@
 #include <iostream>
 #include <torch/script.h>
 
+using LstmOutput =
+    std::tuple<torch::Tensor, std::tuple<torch::Tensor, torch::Tensor>>;
+
 torch::Dimname dimnameFromString(const std::string &str) {
   return torch::Dimname::fromSymbol(torch::Symbol::dimname(str));
 }
@@ -11,18 +14,18 @@ torch::Dimname dimnameFromString(const std::string &str) {
 using namespace torch::indexing;
 
 AgentOutput R2D2Agent::forward(AgentInput &agentInput) {
-  auto x = forwardConv(agentInput.state);
-  auto output = forwardLstm(x, agentInput);
+  auto x = forwardConv(agentInput.state.detach().clone());
+  
+  AgentOutput output;
+  x = forwardLstm(x, agentInput, &output);
   auto batchSize = x.size(0);
   auto seqLen = x.size(1);
 
-  auto input = output.q;
-
   // batch, seq
-  x = forwardDueling(input);
+  x = forwardDueling(std::move(x));
 
-  output.q = x.reshape({batchSize, seqLen, -1});
-  return output;
+  output.q = std::move(x.reshape({batchSize, seqLen, -1}));
+  return std::move(output);
 }
 
 torch::Tensor R2D2Agent::forwardConv(torch::Tensor x) {
@@ -37,10 +40,11 @@ torch::Tensor R2D2Agent::forwardConv(torch::Tensor x) {
   x = torch::relu(conv3->forward(x));
 
   // batch, seq, conv outputs
-  return x.reshape({batchSize, seqLen, -1});
+  return std::move(x.reshape({batchSize, seqLen, -1}));
 }
 
-AgentOutput R2D2Agent::forwardLstm(torch::Tensor x, AgentInput &agentInput) {
+torch::Tensor R2D2Agent::forwardLstm(torch::Tensor x, AgentInput &agentInput,
+                                     AgentOutput *output) {
   auto batchSize = x.size(0);
   auto seqLen = x.size(1);
 
@@ -51,20 +55,18 @@ AgentOutput R2D2Agent::forwardLstm(torch::Tensor x, AgentInput &agentInput) {
   auto lstmInputs = torch::cat({x, agentInput.prevReward, prevActionOneHot}, 2);
 
   LstmOutput ret;
-  AgentOutput output;
   // バッチごとにlstmの初期状態を設定し、ならし運転をする
   // burn in
   if (agentInput.ih != nullptr && agentInput.hh != nullptr) {
     ret = lstm->forward(lstmInputs,
-                         std::make_tuple(agentInput.ih->permute({1, 0, 2}),
-                                         agentInput.hh->permute({1, 0, 2})));
+                        std::make_tuple(agentInput.ih->permute({1, 0, 2}),
+                                        agentInput.hh->permute({1, 0, 2})));
   } else {
     ret = lstm->forward(lstmInputs);
   }
-  output.q = std::get<0>(ret);
-  output.ih = std::get<0>(std::get<1>(ret));
-  output.hh = std::get<1>(std::get<1>(ret));
-  return output;
+  output->ih = std::move(std::get<0>(std::get<1>(ret)));
+  output->hh = std::move(std::get<1>(std::get<1>(ret)));
+  return std::move(std::get<0>(ret));
 }
 
 torch::Tensor R2D2Agent::forwardDueling(torch::Tensor x) {
@@ -75,5 +77,5 @@ torch::Tensor R2D2Agent::forwardDueling(torch::Tensor x) {
   auto stv = torch::relu(state1->forward(x));
   stv = state2->forward(stv);
 
-  return adv + stv;
+  return std::move(adv + stv);
 }

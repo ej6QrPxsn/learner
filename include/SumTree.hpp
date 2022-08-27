@@ -2,12 +2,9 @@
 #define SUM_TREE_HPP
 
 #include <vector>
-#include "Utils.hpp"
-
-struct StoredData {
-  int size;
-  std::unique_ptr<char[]> ptr;
-};
+#include "StructuredData.hpp"
+#include <memory>
+#include <cmath>
 
 class SumTree
 {

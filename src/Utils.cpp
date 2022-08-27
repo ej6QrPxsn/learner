@@ -1,6 +1,5 @@
 #include "Utils.hpp"
-#include "Common.hpp"
-#include "DataConverter.hpp"
+#include <zstd.h> // presumes zstd library is installed
 
 using namespace torch::indexing;
 
@@ -41,10 +40,10 @@ inline auto getRetraceOperatorSigma(int s, torch::Tensor td,
   return torch::sum(sequenceValues, 1).unsqueeze(1);
 }
 
-std::tuple<torch::Tensor, torch::Tensor>
+std::tuple<float, torch::Tensor>
 retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
-            torch::Tensor policy, torch::Tensor onlineQ,
-            torch::Tensor targetQ) {
+            torch::Tensor policy, torch::Tensor onlineQ, torch::Tensor targetQ,
+            torch::optim::Adam *optimizer) {
   auto batchSize = action.size(0);
   auto retraceLength = action.size(1) - 1;
 
@@ -55,11 +54,11 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   // std::cout << "onlineQ: " << onlineQ.sizes() << std::endl;
 
   // オンラインポリシーのgreedyなものがターゲットポリシー
-  auto targetPolicy = std::get<0>(torch::max(torch::softmax(onlineQ, 2), 2));
+  auto targetPolicy = torch::amax(torch::softmax(onlineQ, 2), 2);
   // std::cout << "targetPolicy: " << targetPolicy.sizes() << std::endl;
 
   auto currentTargetQValue =
-      std::get<0>(torch::max(targetQ.index({Slice(), Slice(None, -1)}), 2));
+      torch::amax(targetQ.index({Slice(), Slice(None, -1)}), 2);
   // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes() <<
   // std::endl;
 
@@ -123,27 +122,52 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
   // std::cout << "absErrors: " << absErrors.sizes() << std::endl;
 
   // batch <- batch, seq
-  auto priorities = (ETA * std::get<0>(torch::max(absErrors, 1)) +
-                     (1 - ETA) * torch::mean(absErrors, 1));
+  auto priorities =
+      (ETA * torch::amax(absErrors, 1) + (1 - ETA) * torch::mean(absErrors, 1));
   // std::cout << "priorities: " << priorities.sizes() << std::endl;
 
   // batch <- batch, seq
   auto losses = torch::sum(torch::square(absErrors), 1);
   // std::cout << "losses: " << losses.sizes() << std::endl;
 
-  return std::make_tuple(losses, priorities);
+  auto loss = torch::mean(losses);
+
+  if (optimizer != nullptr) {
+    // Reset gradients.
+    optimizer->zero_grad();
+    // Compute gradients of the loss w.r.t. the parameters of our model.
+    loss.backward();
+    // Update the parameters based on the calculated gradients.
+    optimizer->step();
+  }
+
+  return {loss.item<float>(), priorities.detach()};
 }
 
-StoredData compress(ReplayData & replayData) {
+StoredData compress(ReplayData &replayData) {
+  char tmp[sizeof(ReplayData)];
+
+  size_t const maxCompressedSize = ZSTD_compressBound(sizeof(ReplayData));
+  size_t const compressedSize =
+      ZSTD_compress(tmp, maxCompressedSize, &replayData, sizeof(ReplayData),
+                    ZSTD_CLEVEL_DEFAULT);
+  auto code = ZSTD_isError(compressedSize);
+  if (code) {
+    exit(code);
+  }
+
   StoredData data;
-  data.size = sizeof(ReplayData);
-  data.ptr = std::unique_ptr<char[]>(new char[sizeof(ReplayData)]);
-  memcpy(data.ptr.get(), &replayData, sizeof(ReplayData));
+  data.size = compressedSize;
+  data.ptr = std::unique_ptr<char[]>(new char[compressedSize]);
+  memcpy(data.ptr.get(), tmp, compressedSize);
   return std::move(data);
 }
 
-ReplayData decompress(StoredData & storedData) {
-  ReplayData replayData;
-  memcpy(&replayData, storedData.ptr.get(), sizeof(ReplayData));
-  return std::move(replayData);
+void decompress(StoredData &compressed, ReplayData &replayData) {
+  size_t const decompressedSize = ZSTD_decompress(
+      &replayData, sizeof(ReplayData), compressed.ptr.get(), compressed.size);
+  auto code = ZSTD_isError(decompressedSize);
+  if (code) {
+    exit(code);
+  }
 }

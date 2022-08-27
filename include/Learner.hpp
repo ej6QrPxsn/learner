@@ -5,7 +5,7 @@
 #include "DataConverter.hpp"
 #include "LocalBuffer.hpp"
 #include "Replay.hpp"
-#include "Request.hpp"
+
 #include <vector>
 
 const auto INVALID_ACTION = 99;

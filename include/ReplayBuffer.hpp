@@ -1,11 +1,9 @@
 #ifndef REPLAY_BUFFER_HPP
 #define REPLAY_BUFFER_HPP
 
-#include "Request.hpp"
 #include "SumTree.hpp"
 #include "Utils.hpp"
 #include <memory>
-#include <mutex>
 #include <random>
 
 class ReplayBuffer {
@@ -37,9 +35,7 @@ public:
     }
   }
 
-  std::tuple<std::vector<int>, std::vector<ReplayData>> sample(int n) {
-    std::vector<int> idx_list;
-    std::vector<ReplayData> data_list;
+  void sample(int n, SampleData & sampleData, int baseSize) {
     std::random_device rd;
     std::default_random_engine eng(rd());
 
@@ -60,11 +56,9 @@ public:
       auto & data = std::get<1>(ret);
 
       //(idx, p, data)
-      idx_list.emplace_back(index);
-      data_list.emplace_back(decompress(data));
+      sampleData.indexList[i + baseSize] = index;
+      decompress(data, sampleData.dataList[i + baseSize]);
     }
-
-    return {idx_list, data_list};
   }
 
 private:

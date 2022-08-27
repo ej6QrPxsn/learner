@@ -4,12 +4,11 @@ project(learner)
 set(LIBTORCH_DIR $ENV{HOME}/dev/libtorch)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 
+set(ZSTD_DIR $ENV{HOME}/dev/zstd/build/cmake/builddir)
+list(APPEND CMAKE_PREFIX_PATH ${ZSTD_DIR})
+
 find_package(Torch REQUIRED)
-IF (${GTK_FOUND})
-   MESSAGE(STATUS "Found Torch.")
-ELSE (${GTK_FOUND})
-   MESSAGE(STATUS "Could not locate Torch.")
-ENDIF (${GTK_FOUND})
+find_package(zstd REQUIRED)
 
 enable_language(CXX)
 set(CMAKE_CXX_STANDARD 20) # C++20...
@@ -23,5 +22,6 @@ file(GLOB learner_SRC
 )
 
 add_executable(learner ${learner_SRC})
+
 target_include_directories(learner PUBLIC ./include)
-target_link_libraries(learner "${TORCH_LIBRARIES}")
+target_link_libraries(learner ${TORCH_LIBRARIES} zstd::libzstd_static)

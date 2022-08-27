@@ -1,13 +1,10 @@
 #ifndef LOCAL_BUFFER_HPP
 #define LOCAL_BUFFER_HPP
 
-#include "Models.hpp"
-#include "DataConverter.hpp"
-#include "Utils.hpp"
+#include "StructuredData.hpp"
 #include <memory>
 #include <torch/torch.h>
 
-class Request;
 
 class LocalBuffer {
 public:
