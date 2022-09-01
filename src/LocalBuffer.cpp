@@ -29,12 +29,12 @@ void LocalBuffer::updateAndGetTransition(int envId, Request &request,
   transitions[envId].done.index_put_({0, index}, request.done);
   transitions[envId].ih.index_put_({0, index}, prevIh[envId]);
   transitions[envId].hh.index_put_({0, index}, prevHh[envId]);
-  transitions[envId].q.index_put_({0, index}, agentOutput.q.index({0, 0}));
+  transitions[envId].q.index_put_({0, index}, agentOutput.q.detach().index({0, 0}));
   transitions[envId].policy.index_put_({0, index}, policy);
 
   // value <- batch(1), seq(1), value
-  prevIh[envId].index_put_({Slice()}, agentOutput.ih.index({0, 0}));
-  prevHh[envId].index_put_({Slice()}, agentOutput.hh.index({0, 0}));
+  prevIh[envId].index_put_({Slice()}, agentOutput.ih.detach().index({0, 0}));
+  prevHh[envId].index_put_({Slice()}, agentOutput.hh.detach().index({0, 0}));
 
   index++;
 

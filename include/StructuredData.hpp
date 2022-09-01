@@ -15,14 +15,14 @@ struct Request {
 
 struct AgentInput {
   AgentInput() {}
-  AgentInput(torch::Tensor state_, int batchSize, int seqLength) {
+  AgentInput(torch::Tensor state_, int batchSize, int seqLength, torch::Device device) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
 
-    state = torch::empty(stateSizes, torch::kFloat32);
-    prevAction = torch::empty({batchSize, seqLength}, torch::kLong);
-    prevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
+    state = torch::empty(stateSizes, torch::kFloat32).to(device);
+    prevAction = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
+    prevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
   }
 
   torch::Tensor state;
@@ -85,13 +85,13 @@ struct RetraceQ {
 
 struct RetraceData {
   RetraceData() {}
-  RetraceData(int batchSize, int seqLength, int actionSize) {
-    action = torch::empty({batchSize, seqLength, 1}, torch::kInt64);
-    reward = torch::empty({batchSize, seqLength}, torch::kFloat32);
-    done = torch::empty({batchSize, seqLength}, torch::kBool);
-    policy = torch::empty({batchSize, seqLength}, torch::kFloat32);
-    onlineQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
-    targetQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
+  RetraceData(int batchSize, int seqLength, int actionSize, torch::Device device) {
+    action = torch::empty({batchSize, seqLength, 1}, torch::kInt64).to(device);
+    reward = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
+    done = torch::empty({batchSize, seqLength}, torch::kBool).to(device);
+    policy = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
+    onlineQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32).to(device);
+    targetQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32).to(device);
   }
 
   torch::Tensor action;
@@ -115,18 +115,18 @@ struct SampleData {
 
 struct TrainData {
   TrainData() {}
-  TrainData(torch::Tensor state_, int batchSize, int seqLength) {
+  TrainData(torch::Tensor state_, int batchSize, int seqLength, torch::Device device) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
 
-    state = torch::empty(stateSizes, torch::kFloat32);
-    action = torch::empty({batchSize, seqLength}, torch::kLong);
-    reward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
-    done = torch::empty({batchSize, seqLength, 1}, torch::kBool);
-    ih = torch::empty({batchSize, 1, 512}, torch::kFloat32);
-    hh = torch::empty({batchSize, 1, 512}, torch::kFloat32);
-    policy = torch::empty({batchSize, seqLength}, torch::kFloat32);
+    state = torch::empty(stateSizes, torch::kFloat32).to(device);
+    action = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
+    reward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
+    done = torch::empty({batchSize, seqLength, 1}, torch::kBool).to(device);
+    ih = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);
+    hh = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);
+    policy = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
   }
 
   torch::Tensor state;

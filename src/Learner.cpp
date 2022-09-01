@@ -95,8 +95,10 @@ int Learner::sendAndRecieveActor(int fd_other) {
   Request request;
   int action;
   int steps = 0;
+  torch::Device device(torch::cuda::is_available() ? torch::kCUDA
+                                                   : torch::kCPU);
 
-  AgentInput agentInput(state, 1, 1);
+  AgentInput agentInput(state, 1, 1, device);
 
   // 初回のみパケットサイズを得る
   size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
@@ -113,7 +115,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
     request.reward = *reinterpret_cast<float *>(&buf[buf_len - 5]);
     request.done = *reinterpret_cast<bool *>(&buf[buf_len - 1]);
 
-    action = inference(task, request, agentInput);
+    action = inference(task, request, agentInput, device);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -124,7 +126,8 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(int envId, Request &request, AgentInput &agentInput) {
+int Learner::inference(int envId, Request &request, AgentInput &agentInput,
+                       torch::Device device) {
   int action;
   std::vector<ReplayData> replayDatas;
   std::vector<RetraceQ> retraceQs;
@@ -137,21 +140,23 @@ int Learner::inference(int envId, Request &request, AgentInput &agentInput) {
     agentOutput = agent.onlineNet.forward(agentInput);
   }
 
+  auto q = agentOutput.q.cpu();
+
   // 選択アクションの確率
-  auto policy = torch::amax(torch::softmax(agentOutput.q, 2), 2);
+  auto policy = torch::amax(torch::softmax(q, 2), 2);
 
   // std::cout << "policies: " << policies << std::endl;
 
   // 環境ごとの閾値
-  auto epsThreshold =
-      torch::pow(0.4, torch::linspace(1., 8., numEnvs)).index({envId});
+  auto epsThreshold = torch::pow(0.4, torch::linspace(1., 8., numEnvs))
+                          .index({envId});
 
   auto randomAction =
-      torch::randint(0, agentOutput.q.size(2), 1).to(torch::kLong);
+      torch::randint(0, q.size(2), 1).to(torch::kLong);
   auto prob = torch::randn(1);
 
   auto selectAction = torch::where(prob < epsThreshold, randomAction,
-                                   torch::argmax(agentOutput.q, 2));
+                                   torch::argmax(q, 2));
 
   localBuffer.updateAndGetTransition(envId, request, selectAction, agentOutput,
                                      policy, &replayDatas, &retraceQs);
@@ -159,18 +164,18 @@ int Learner::inference(int envId, Request &request, AgentInput &agentInput) {
   if (!replayDatas.empty()) {
 
     int returnSize = replayDatas.size();
-    RetraceData retraceData(returnSize, 1 + TRACE_LENGTH, actionSize);
+    RetraceData retraceData(returnSize, 1 + TRACE_LENGTH, actionSize, device);
 
     dataConverter.toBatchedRetraceData(replayDatas, retraceQs, &retraceData,
                                        returnSize);
 
-    auto priorities = std::get<1>(retraceLoss(
-        retraceData.action.index({Slice(None, returnSize)}),
-        retraceData.reward.index({Slice(None, returnSize)}),
-        retraceData.done.index({Slice(None, returnSize)}),
-        retraceData.policy.index({Slice(None, returnSize)}),
-        retraceData.onlineQ.index({Slice(None, returnSize)}),
-        retraceData.targetQ.index({Slice(None, returnSize)})));
+    auto priorities = std::get<1>(
+        retraceLoss(retraceData.action.index({Slice(None, returnSize)}),
+                    retraceData.reward.index({Slice(None, returnSize)}),
+                    retraceData.done.index({Slice(None, returnSize)}),
+                    retraceData.policy.index({Slice(None, returnSize)}),
+                    retraceData.onlineQ.index({Slice(None, returnSize)}),
+                    retraceData.targetQ.index({Slice(None, returnSize)}), device));
 
     replay.putReplayQueue(priorities, replayDatas);
     replayDatas.clear();
@@ -183,6 +188,8 @@ int Learner::inference(int envId, Request &request, AgentInput &agentInput) {
 SampleData sampleData;
 
 void Learner::trainLoop() {
+  torch::Device device(torch::cuda::is_available() ? torch::kCUDA
+                                                   : torch::kCPU);
   int stepsDone = 0;
   // std::string envent_file = "/home/yoshi/logs";
   // tensorflow::EventsWriter writer(envent_file);
@@ -192,7 +199,7 @@ void Learner::trainLoop() {
       torch::optim::AdamOptions().lr(LEARNING_RATE).eps(EPSILON));
 
   std::deque<float> lossList;
-  TrainData trainData(state, BATCH_SIZE, SEQ_LENGTH);
+  TrainData trainData(state, BATCH_SIZE, SEQ_LENGTH, device);
 
   while (1) {
     replay.sample(sampleData);
@@ -211,17 +218,22 @@ void Learner::trainLoop() {
     AgentInput input;
 
     input.state = trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)});
-    input.prevAction = trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)});
-    input.prevReward = trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)});
+    input.prevAction =
+        trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)});
+    input.prevReward =
+        trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)});
     input.ih = &trainData.ih;
     input.hh = &trainData.hh;
 
     agent.onlineNet.forward(input);
     agent.targetNet.forward(input);
 
-    input.state = trainData.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
-    input.prevAction = trainData.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
-    input.prevReward = trainData.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)});
+    input.state =
+        trainData.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
+    input.prevAction =
+        trainData.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
+    input.prevReward =
+        trainData.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)});
     input.ih = nullptr;
     input.hh = nullptr;
 
@@ -235,14 +247,15 @@ void Learner::trainLoop() {
             .squeeze(-1),
         trainData.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         trainData.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        std::move(onlineRet.q), std::move(targetRet.q), &optimizer);
-    
+        std::move(onlineRet.q), std::move(targetRet.q), device, &optimizer);
+
     lossList.push_back(lossValue);
     if (lossList.size() > 100) {
       lossList.pop_front();
     }
 
-    replay.updatePriorities(sampleData.labelList, sampleData.indexList, priorities);
+    replay.updatePriorities(sampleData.labelList, sampleData.indexList,
+                            priorities);
 
     // ターゲットネットワーク更新
     if (stepsDone % TARGET_UPDATE == 0) {

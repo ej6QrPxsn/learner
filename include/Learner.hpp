@@ -21,7 +21,7 @@ public:
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(int envId, Request &request, AgentInput &agentInput);
+  int inference(int envId, Request &request, AgentInput &agentInput, torch::Device device);
   Replay *getReplay() { return &replay; }
   void trainLoop();
 

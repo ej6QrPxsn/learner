@@ -43,7 +43,7 @@ inline auto getRetraceOperatorSigma(int s, torch::Tensor td,
 std::tuple<float, torch::Tensor>
 retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
             torch::Tensor policy, torch::Tensor onlineQ, torch::Tensor targetQ,
-            torch::optim::Adam *optimizer) {
+            torch::Device device, torch::optim::Adam *optimizer) {
   auto batchSize = action.size(0);
   auto retraceLength = action.size(1) - 1;
 
@@ -85,9 +85,9 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
 
   // retrace coefficients
   // ゼロ除算防止
-  auto zero = torch::zeros({1});
-  auto one = torch::ones({1});
-  auto epsilon = torch::empty({1}).index_put_({0}, 1e-6);
+  auto zero = torch::zeros({1}).to(device);
+  auto one = torch::ones({1}).to(device);
+  auto epsilon = torch::empty({1}).index_put_({0}, 1e-6).to(device);
 
   auto noZeroPolicy = torch::where(policy == zero, epsilon, policy);
   auto retraceCoefficients =
