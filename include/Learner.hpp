@@ -15,13 +15,14 @@ public:
   Learner(torch::Tensor state_, int actionSize_, int numEnvs_, int traceLength,
           int replayPeriod, int capacity)
       : numEnvs(numEnvs_), actionSize(actionSize_), agent(actionSize_),
-        state(state_), localBuffer(state_, numEnvs),
+        state(state_),
         dataConverter(state_, actionSize_, 1 + replayPeriod + traceLength),
         replay(dataConverter, capacity) {}
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(int envId, Request &request, AgentInput &agentInput, torch::Device device);
+  int inference(Request &request, AgentInput &agentInput,
+                torch::Device device, LocalBuffer &localBuffer);
   Replay *getReplay() { return &replay; }
   void trainLoop();
 
@@ -35,7 +36,6 @@ private:
 
   Agent agent;
   torch::Tensor state;
-  LocalBuffer localBuffer;
   DataConverter dataConverter;
   Replay replay;
 };

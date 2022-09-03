@@ -5,24 +5,24 @@
 #include <torch/torch.h>
 
 struct Request {
-  Request() {}
-  Request(torch::Tensor state_, float reward_, bool done_)
-      : state(state_), reward(reward_), done(done_) {}
-  torch::Tensor state;
+  int envId;
+  uint8_t state[STATE_SIZE];
   float reward;
   bool done;
-};
+} __attribute__((packed));
 
 struct AgentInput {
   AgentInput() {}
-  AgentInput(torch::Tensor state_, int batchSize, int seqLength, torch::Device device) {
+  AgentInput(torch::Tensor state_, int batchSize, int seqLength,
+             torch::Device device) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
 
     state = torch::empty(stateSizes, torch::kFloat32).to(device);
     prevAction = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
-    prevReward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
+    prevReward =
+        torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
   }
 
   torch::Tensor state;
@@ -38,60 +38,55 @@ struct AgentOutput {
   torch::Tensor q;
 };
 
-struct Transition {
-  Transition() {}
-  Transition(torch::Tensor state_, int batchSize, int seqLength,
-             int actionSize) {
-    auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
-    auto stateShape = state_.sizes();
-    stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
-
-    state = torch::empty(stateSizes, state_.dtype());
-    action = torch::empty({batchSize, seqLength, 1}, torch::kUInt8);
-    reward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
-    done = torch::empty({batchSize, seqLength, 1}, torch::kBool);
-    policy = torch::empty({batchSize, seqLength, 1}, torch::kFloat32);
-
-    ih = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
-    hh = torch::empty({batchSize, seqLength, 512}, torch::kFloat32);
-    q = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32);
-  }
-
-  torch::Tensor state;
-  torch::Tensor action;
-  torch::Tensor reward;
-  torch::Tensor done;
-  torch::Tensor ih;
-  torch::Tensor hh;
-  torch::Tensor policy;
-  torch::Tensor q;
-};
-
 struct ReplayData {
   ReplayData() {}
-  uint8_t state[SEQ_LENGTH * STATE_SIZE];
+  ReplayData & getReplayData() {
+    return *this;
+  }
+
+  uint8_t state[SEQ_LENGTH][STATE_SIZE];
   uint8_t action[SEQ_LENGTH];
   float reward[SEQ_LENGTH];
-  bool done[SEQ_LENGTH];
+  float policy[SEQ_LENGTH];
   float ih[LSTM_STATE_SIZE];
   float hh[LSTM_STATE_SIZE];
-  float policy[SEQ_LENGTH];
+  bool done[SEQ_LENGTH];
 };
 
-struct RetraceQ {
-  RetraceQ() {}
-  float onlineQ[SEQ_LENGTH * ACTION_SIZE];
+struct Transition : ReplayData {
+  Transition() {}
+
+  ReplayData & getReplayData() {
+    std::copy(ih[1], ih[1] + LSTM_STATE_SIZE, ReplayData::ih);
+    std::copy(hh[1], hh[1] + LSTM_STATE_SIZE, ReplayData::hh);
+
+    return ReplayData::getReplayData();
+  }
+
+  float ih[SEQ_LENGTH][LSTM_STATE_SIZE];
+  float hh[SEQ_LENGTH][LSTM_STATE_SIZE];
+  float q[SEQ_LENGTH][ACTION_SIZE];
 };
 
 struct RetraceData {
   RetraceData() {}
-  RetraceData(int batchSize, int seqLength, int actionSize, torch::Device device) {
+  RetraceData(int batchSize, int seqLength, int actionSize,
+              torch::Device device) {
+
+    // auto options = torch::TensorOptions()
+    //                    .dtype(torch::kFloat32)
+    //                    .layout(torch::kStrided)
+    //                    .device(torch::kCUDA, 1)
+    //                    .requires_grad(true);
+
     action = torch::empty({batchSize, seqLength, 1}, torch::kInt64).to(device);
     reward = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
     done = torch::empty({batchSize, seqLength}, torch::kBool).to(device);
     policy = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
-    onlineQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32).to(device);
-    targetQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32).to(device);
+    onlineQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32)
+                  .to(device);
+    targetQ = torch::empty({batchSize, seqLength, actionSize}, torch::kFloat32)
+                  .to(device);
   }
 
   torch::Tensor action;
@@ -103,7 +98,8 @@ struct RetraceData {
 };
 
 struct StoredData {
-  int size;
+  int size = 0;
+  float reward = 0;
   std::unique_ptr<char[]> ptr;
 };
 
@@ -115,14 +111,16 @@ struct SampleData {
 
 struct TrainData {
   TrainData() {}
-  TrainData(torch::Tensor state_, int batchSize, int seqLength, torch::Device device) {
+  TrainData(torch::Tensor state_, int batchSize, int seqLength,
+            torch::Device device) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
     auto stateShape = state_.sizes();
     stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
 
     state = torch::empty(stateSizes, torch::kFloat32).to(device);
     action = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
-    reward = torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
+    reward =
+        torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
     done = torch::empty({batchSize, seqLength, 1}, torch::kBool).to(device);
     ih = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);
     hh = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);

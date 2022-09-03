@@ -15,13 +15,14 @@ public:
         dist(0.0, 1.0), highRewards(HIGH_REWARD_SIZE, 0),
         highRewardBuffer(HIGH_REWARD_BUFFER_SIZE) {
     std::promise<void> bufferNotification;
-    ReplayDataFuture = bufferNotification.get_future();
+    replayDataFuture = bufferNotification.get_future();
 
     addThread =
         std::thread(&Replay::addLoop, this, std::move(bufferNotification));
   }
 
-  void updatePriorities(std::array<int, BATCH_SIZE> labels, std::array<int, BATCH_SIZE> indexes,
+  void updatePriorities(std::array<int, BATCH_SIZE> labels,
+                        std::array<int, BATCH_SIZE> indexes,
                         torch::Tensor priorities) {
     for (int i = 0; i < indexes.size(); i++) {
       if (labels[i] == REPLAY) {
@@ -33,17 +34,24 @@ public:
     }
   }
 
-  void putReplayQueue(torch::Tensor priorities, std::vector<ReplayData> data) {
+  void putReplayQueue(torch::Tensor priorities, std::vector<StoredData> data) {
     if (replayQueue.size() < MAX_REPLAY_QUEUE_SIZE) {
-      replayQueue.emplace_back(std::move(std::make_tuple(priorities, data)));
+      replayQueue.emplace_back(
+          std::move(std::make_tuple(priorities, std::move(data))));
       replayCond.notify_one();
     }
+  }
+
+  float median(std::vector<float> &v) {
+    size_t n = v.size() / 2;
+    nth_element(v.begin(), v.begin() + n, v.end());
+    return v[n];
   }
 
   auto popReplayQueue() {
     std::unique_lock<std::mutex> lck(replayMtx);
     replayCond.wait(lck, [&] { return !replayQueue.empty(); });
-    auto queueData = replayQueue.front();
+    auto queueData = std::move(replayQueue.front());
     replayQueue.pop_front();
     return queueData;
   }
@@ -52,23 +60,30 @@ public:
     auto queueData = std::move(popReplayQueue());
 
     auto priorities = std::get<0>(queueData);
-    auto dataList = std::get<1>(queueData);
+    auto dataList = std::move(std::get<1>(queueData));
 
     for (int i = 0; i < dataList.size(); i++) {
-      replayBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
+      auto &storeData = dataList[i];
+      auto reward = storeData.reward;
+      auto size = storeData.size;
+      auto ptr = storeData.ptr.get();
+      replayBuffer.add(priorities.index({i}).item<float>(),
+                       std::move(storeData));
 
-      // 遷移の報酬が高報酬リストの平均よりも高いなら、高報酬バッファに遷移を入れる
-      auto rewards = std::accumulate(dataList[i].reward,
-                                     dataList[i].reward + SEQ_LENGTH, 0.0);
-      const auto ave =
-          std::accumulate(std::begin(highRewards), std::end(highRewards), 0.0) /
-          std::size(highRewards);
-      if (rewards > ave) {
-        highRewardBuffer.add(priorities.index({i}).item<float>(), dataList[i]);
+      // 遷移の報酬が高報酬リストの中央値よりも高いなら、高報酬バッファに遷移を入れる
+      const auto medVal = median(highRewards);
+      if (reward > medVal) {
+        StoredData data;
+        data.size = size;
+        data.reward = reward;
+        data.ptr = std::make_unique<char[]>(size);
+        memcpy(data.ptr.get(), ptr, size);
+        highRewardBuffer.add(priorities.index({i}).item<float>(),
+                             std::move(data));
 
         // 高報酬リストの最小値を新しい報酬で置き換える
         auto minIter = min_element(highRewards.begin(), highRewards.end());
-        *minIter = rewards;
+        *minIter = reward;
       }
     }
   }
@@ -102,15 +117,14 @@ public:
 
     if (highRewardCount > 0) {
       highRewardBuffer.sample(highRewardCount, sampleData, replayCount);
-      for(int i = replayCount; i < BATCH_SIZE; i++) {
+      for (int i = replayCount; i < BATCH_SIZE; i++) {
         sampleData.labelList[i] = HIGH_REWARD;
       }
     }
-
   }
 
   void sample(SampleData &sampleData) {
-    ReplayDataFuture.wait();
+    replayDataFuture.wait();
 
     getSample(sampleData);
   }
@@ -119,7 +133,7 @@ public:
   std::mt19937 engine;
   std::uniform_real_distribution<> dist;
 
-  std::future<void> ReplayDataFuture;
+  std::future<void> replayDataFuture;
   std::thread addThread;
   std::thread sampleThread;
   DataConverter dataConverter;
@@ -127,7 +141,7 @@ public:
   ReplayBuffer highRewardBuffer;
   std::vector<float> highRewards;
 
-  std::deque<std::tuple<torch::Tensor, std::vector<ReplayData>>> replayQueue;
+  std::deque<std::tuple<torch::Tensor, std::vector<StoredData>>> replayQueue;
   std::mutex replayMtx;
   std::condition_variable replayCond;
   std::mutex sampleMtx;

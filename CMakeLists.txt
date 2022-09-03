@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 project(learner)
 
+set(CUDA_HOME /usr/local/cuda-11.6)
 set(LIBTORCH_DIR $ENV{HOME}/dev/libtorch)
 list(APPEND CMAKE_PREFIX_PATH ${LIBTORCH_DIR})
 

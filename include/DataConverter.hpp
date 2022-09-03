@@ -12,9 +12,6 @@ public:
       : state(state_), actionSize(actionSize_), seqLength(seqLength_) {}
 
   void toBatchedTrainData(TrainData &train, std::array<ReplayData, BATCH_SIZE> & dataList);
-  void toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
-                            std::vector<RetraceQ> &RetraceQs,
-                            RetraceData *retrace, int batchSize);
 
 private:
   int actionSize;

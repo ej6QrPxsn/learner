@@ -1,4 +1,3 @@
-#include "Learner.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <pwd.h>
@@ -7,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "Learner.hpp"
 // #include <tensorflow/core/util/events_writer.h>
 
 using namespace torch::indexing;
@@ -91,31 +91,21 @@ int Learner::listenActor() {
 int Learner::sendAndRecieveActor(int fd_other) {
   ssize_t size = 0;
   uint32_t buf_len = 0;
-  char buf[10240];
   Request request;
   int action;
   int steps = 0;
   torch::Device device(torch::cuda::is_available() ? torch::kCUDA
                                                    : torch::kCPU);
+  LocalBuffer localBuffer(state, numEnvs, device);
 
   AgentInput agentInput(state, 1, 1, device);
 
-  // 初回のみパケットサイズを得る
-  size = recv(fd_other, &buf_len, sizeof(buf_len), 0);
-  // printf("buf_len = %d\n", buf_len);
-
   while (1) {
     // データ本体の受信
-    size = recv(fd_other, buf, buf_len, 0);
+    size = recv(fd_other, &request, sizeof(request), 0);
     // printf("buf_len = %d\n", buf_len);
 
-    int task = *reinterpret_cast<int *>(&buf[0]);
-
-    request.state = torch::from_blob(&buf[4], state.sizes(), state.dtype());
-    request.reward = *reinterpret_cast<float *>(&buf[buf_len - 5]);
-    request.done = *reinterpret_cast<bool *>(&buf[buf_len - 1]);
-
-    action = inference(task, request, agentInput, device);
+    action = inference(request, agentInput, device, localBuffer);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -126,14 +116,12 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(int envId, Request &request, AgentInput &agentInput,
-                       torch::Device device) {
+int Learner::inference(Request &request, AgentInput &agentInput,
+                       torch::Device device, LocalBuffer &localBuffer) {
   int action;
-  std::vector<ReplayData> replayDatas;
-  std::vector<RetraceQ> retraceQs;
   AgentOutput agentOutput;
 
-  localBuffer.setInferenceParam(envId, request, &agentInput);
+  localBuffer.setInferenceParam(request, &agentInput);
 
   {
     c10::InferenceMode guard(true);
@@ -148,38 +136,25 @@ int Learner::inference(int envId, Request &request, AgentInput &agentInput,
   // std::cout << "policies: " << policies << std::endl;
 
   // 環境ごとの閾値
-  auto epsThreshold = torch::pow(0.4, torch::linspace(1., 8., numEnvs))
-                          .index({envId});
+  auto epsThreshold =
+      torch::pow(0.4, torch::linspace(1., 8., numEnvs)).index({request.envId});
 
-  auto randomAction =
-      torch::randint(0, q.size(2), 1).to(torch::kLong);
+  auto randomAction = torch::randint(0, q.size(2), 1).to(torch::kLong);
   auto prob = torch::randn(1);
 
-  auto selectAction = torch::where(prob < epsThreshold, randomAction,
-                                   torch::argmax(q, 2));
+  auto selectAction =
+      torch::where(prob < epsThreshold, randomAction, torch::argmax(q, 2));
 
-  localBuffer.updateAndGetTransition(envId, request, selectAction, agentOutput,
-                                     policy, &replayDatas, &retraceQs);
+  auto ret = localBuffer.updateAndGetTransition(request, selectAction, q,
+                                                agentOutput, policy);
 
-  if (!replayDatas.empty()) {
+  if (ret) {
+    auto &retraceData = localBuffer.getRetraceData();
+    auto priorities = std::get<1>(retraceLoss(
+        retraceData.action, retraceData.reward, retraceData.done,
+        retraceData.policy, retraceData.onlineQ, retraceData.targetQ, device));
 
-    int returnSize = replayDatas.size();
-    RetraceData retraceData(returnSize, 1 + TRACE_LENGTH, actionSize, device);
-
-    dataConverter.toBatchedRetraceData(replayDatas, retraceQs, &retraceData,
-                                       returnSize);
-
-    auto priorities = std::get<1>(
-        retraceLoss(retraceData.action.index({Slice(None, returnSize)}),
-                    retraceData.reward.index({Slice(None, returnSize)}),
-                    retraceData.done.index({Slice(None, returnSize)}),
-                    retraceData.policy.index({Slice(None, returnSize)}),
-                    retraceData.onlineQ.index({Slice(None, returnSize)}),
-                    retraceData.targetQ.index({Slice(None, returnSize)}), device));
-
-    replay.putReplayQueue(priorities, replayDatas);
-    replayDatas.clear();
-    retraceQs.clear();
+    replay.putReplayQueue(priorities, std::move(localBuffer.getReplayData()));
   }
 
   return selectAction.item<int>();

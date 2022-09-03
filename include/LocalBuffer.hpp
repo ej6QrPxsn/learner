@@ -5,38 +5,38 @@
 #include <memory>
 #include <torch/torch.h>
 
-
 class LocalBuffer {
 public:
-  LocalBuffer(torch::Tensor &_state, int numEnvs)
-      : state(_state),
-        transitions(numEnvs, Transition(_state, 1, SEQ_LENGTH, ACTION_SIZE)),
-        indexes(numEnvs, 0),
-        prevAction(numEnvs, torch::zeros({1}, torch::kUInt8)),
-        prevReward(numEnvs, torch::zeros({1}, torch::kFloat32)),
-        prevIh(numEnvs, torch::zeros({512}, torch::kFloat32)),
-        prevHh(numEnvs, torch::zeros({512}, torch::kFloat32)) {}
+  LocalBuffer(torch::Tensor state_, int numEnvs, torch::Device device_)
+      : stateShape(state_.sizes()), device(device_),
+        retraceData(BATCH_SIZE, 1 + TRACE_LENGTH, ACTION_SIZE, device_) {}
 
-  void setInferenceParam(int envId, Request &request, AgentInput *inferData);
-  void updateAndGetTransition(int envId, Request &request,
-                              torch::Tensor &action, AgentOutput & agentOutput,
-                              torch::Tensor &policy,
-                              std::vector<ReplayData> *retReplay,
-                              std::vector<RetraceQ> *retRetrace);
+  RetraceData &getRetraceData() { return retraceData; }
+  std::vector<StoredData> getReplayData() {
+    std::vector<StoredData> ret;
+    ret.swap(storedDatas);
+    retraceIndex = 0;
+    return ret;
+  }
 
-  void getTransitions(std::vector<ReplayData> *retReplay,
-                      std::vector<RetraceQ> *retRetrace);
+  void setInferenceParam(Request &request, AgentInput *inferData);
+  void inline setRetaceData();
+  bool updateAndGetTransition(Request &request, torch::Tensor &action,
+                              torch::Tensor &q, AgentOutput &agentOutput,
+                              torch::Tensor &policy);
 
 private:
-  torch::Tensor state;
-  std::vector<Transition> transitions;
-  std::vector<ReplayData> replayList;
-  std::vector<RetraceQ> qList;
-  std::vector<int> indexes;
-  std::vector<torch::Tensor> prevAction;
-  std::vector<torch::Tensor> prevReward;
-  std::vector<torch::Tensor> prevIh;
-  std::vector<torch::Tensor> prevHh;
+  torch::Device device;
+  c10::IntArrayRef stateShape;
+  Transition transition;
+  int index = 0;
+  int retraceIndex = 0;
+  uint8_t prevAction;
+  float prevReward;
+  float prevIh[LSTM_STATE_SIZE];
+  float prevHh[LSTM_STATE_SIZE];
+  RetraceData retraceData;
+  std::vector<StoredData> storedDatas;
 };
 
 #endif // LOCAL_BUFFER_HPP

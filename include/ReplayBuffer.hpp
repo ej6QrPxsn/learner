@@ -1,10 +1,10 @@
 #ifndef REPLAY_BUFFER_HPP
 #define REPLAY_BUFFER_HPP
 
-#include "SumTree.hpp"
-#include "Utils.hpp"
-#include <memory>
 #include <random>
+#include "Utils.hpp"
+#include "SumTree.hpp"
+#include <memory>
 
 class ReplayBuffer {
 public:
@@ -17,9 +17,9 @@ public:
     tree.update(idx, p);
   }
 
-  void add(float p, ReplayData sample) {
+  void add(float p, StoredData data) {
     std::lock_guard<std::mutex> lock(mtx);
-    tree.add(p, compress(sample));
+    tree.add(p, std::move(data));
     count += 1;
     if (count < REPLAY_BUFFER_MIN_SIZE) {
       if (count % REPLAY_BUFFER_ADD_PRINT_SIZE == 0) {

@@ -1,5 +1,5 @@
-#include "Utils.hpp"
 #include <zstd.h> // presumes zstd library is installed
+#include "Utils.hpp"
 
 using namespace torch::indexing;
 

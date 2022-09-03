@@ -1,8 +1,8 @@
 #ifndef UTILS_HPP
 #define UTILS_HPP
 
-#include "StructuredData.hpp"
 #include <torch/torch.h>
+#include "StructuredData.hpp"
 
 std::tuple<float, torch::Tensor>
 retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,

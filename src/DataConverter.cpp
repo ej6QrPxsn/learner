@@ -33,31 +33,3 @@ void DataConverter::toBatchedTrainData(
                                         torch::kFloat)));
   }
 }
-
-void DataConverter::toBatchedRetraceData(std::vector<ReplayData> &replayDatas,
-                                         std::vector<RetraceQ> &RetraceQs,
-                                         RetraceData *retrace, int batchSize) {
-  for (int i = 0; i < batchSize; i++) {
-    retrace->action.index_put_(
-        {i},
-        torch::from_blob(replayDatas[i].action, {SEQ_LENGTH, 1}, torch::kUInt8)
-            .index({Slice(REPLAY_PERIOD, None)}));
-    retrace->reward.index_put_(
-        {i}, torch::from_blob(replayDatas[i].reward, SEQ_LENGTH, torch::kFloat)
-                 .index({Slice(REPLAY_PERIOD, None)}));
-    retrace->done.index_put_(
-        {i}, torch::from_blob(replayDatas[i].done, SEQ_LENGTH, torch::kBool)
-                 .index({Slice(REPLAY_PERIOD, None)}));
-    retrace->policy.index_put_(
-        {i}, torch::from_blob(replayDatas[i].policy, SEQ_LENGTH, torch::kFloat)
-                 .index({Slice(REPLAY_PERIOD, None)}));
-    retrace->onlineQ.index_put_({i}, torch::from_blob(RetraceQs[i].onlineQ,
-                                                      {SEQ_LENGTH, ACTION_SIZE},
-                                                      torch::kFloat)
-                                         .index({Slice(REPLAY_PERIOD, None)}));
-    retrace->targetQ.index_put_({i}, torch::from_blob(RetraceQs[i].onlineQ,
-                                                      {SEQ_LENGTH, ACTION_SIZE},
-                                                      torch::kFloat)
-                                         .index({Slice(REPLAY_PERIOD, None)}));
-  }
-}

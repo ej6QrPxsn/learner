@@ -29,7 +29,7 @@
             "name": "RelDebug",
             "program": "${workspaceFolder}/build/learner",
             "args": [],
-            "preLaunchTask": "RelDebug My Build",
+            // "preLaunchTask": "RelDebug My Build",
             "cwd": "${workspaceFolder}"
         },
         {
@@ -38,7 +38,7 @@
             "name": "Release",
             "program": "${workspaceFolder}/build/learner",
             "args": [],
-            "preLaunchTask": "Release My Build",
+            // "preLaunchTask": "Release My Build",
             "cwd": "${workspaceFolder}"
         }
     ]
