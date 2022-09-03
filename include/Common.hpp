@@ -22,8 +22,8 @@ const auto RESCALING_EPSILON = 1e-3;
 const auto ETA = 0.9;
 const auto DISCOUNT_GAMMA = 0.997;
 
-const auto HIGH_REWARD_BUFFER_SIZE = 1000;
-const auto HIGH_REWARD_SIZE = 100;
+const auto HIGH_REWARD_BUFFER_SIZE = 100;
+const auto HIGH_REWARD_SIZE = 10;
 const auto HIGH_REWARD_RATIO = 1. / 256.;
 const auto REPLAY = 1;
 const auto HIGH_REWARD = 2;

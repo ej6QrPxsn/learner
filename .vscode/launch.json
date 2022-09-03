@@ -5,16 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "cppdbg",
-            "request": "launch",
-            "name": "Open a core dump(c/c++)",
-            "program": "${workspaceFolder}/build/learner",
-            "coreDumpPath": "${workspaceFolder}/core",
-            "cwd": "${workspaceFolder}",
-            "miDebuggerPath": "/usr/bin/lldb",
-            "MIMode": "lldb" // or gdb, if you are using gdb
-        },
-        {
             "type": "lldb",
             "request": "launch",
             "name": "Debug",
