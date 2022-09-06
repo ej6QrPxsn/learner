@@ -1,3 +1,4 @@
+#include "Learner.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <pwd.h>
@@ -6,11 +7,13 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include "Learner.hpp"
 // #include <tensorflow/core/util/events_writer.h>
 
 using namespace torch::indexing;
-std::mutex mtx_;
+std::vector<Agent> gAgents(NUM_TRAIN_THREADS, Agent(ACTION_SIZE));
+std::array<SampleData, NUM_TRAIN_THREADS> gSamples;
+std::array<AgentInput, NUM_TRAIN_THREADS> gAgentInputs;
+std::array<TrainData, NUM_TRAIN_THREADS> gTrainDatas;
 
 int Learner::listenActor() {
 
@@ -89,10 +92,10 @@ int Learner::listenActor() {
 }
 
 int Learner::sendAndRecieveActor(int fd_other) {
-  ssize_t size = 0;
-  uint32_t buf_len = 0;
+  size_t size;
   Request request;
   int action;
+  int envId;
   int steps = 0;
   torch::Device device(torch::cuda::is_available() ? torch::kCUDA
                                                    : torch::kCPU);
@@ -100,12 +103,16 @@ int Learner::sendAndRecieveActor(int fd_other) {
 
   AgentInput agentInput(state, 1, 1, device);
 
+  // アクター番号
+  size = recv(fd_other, &envId, sizeof(envId), 0);
+
+  auto &model = gAgents[envId % NUM_TRAIN_THREADS].onlineNet;
+
   while (1) {
     // データ本体の受信
     size = recv(fd_other, &request, sizeof(request), 0);
-    // printf("buf_len = %d\n", buf_len);
 
-    action = inference(request, agentInput, device, localBuffer);
+    action = inference(model, request, agentInput, device, localBuffer);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -116,8 +123,9 @@ int Learner::sendAndRecieveActor(int fd_other) {
   }
 }
 
-int Learner::inference(Request &request, AgentInput &agentInput,
-                       torch::Device device, LocalBuffer &localBuffer) {
+int Learner::inference(R2D2Agent &model, Request &request,
+                       AgentInput &agentInput, torch::Device device,
+                       LocalBuffer &localBuffer) {
   int action;
   AgentOutput agentOutput;
 
@@ -125,7 +133,7 @@ int Learner::inference(Request &request, AgentInput &agentInput,
 
   {
     c10::InferenceMode guard(true);
-    agentOutput = agent.onlineNet.forward(agentInput);
+    agentOutput = model.forward(agentInput);
   }
 
   auto q = agentOutput.q.cpu();
@@ -160,37 +168,27 @@ int Learner::inference(Request &request, AgentInput &agentInput,
   return selectAction.item<int>();
 }
 
-SampleData sampleData;
-
-void Learner::trainLoop() {
+void Learner::trainLoop(int threadNum) {
   torch::Device device(torch::cuda::is_available() ? torch::kCUDA
                                                    : torch::kCPU);
   int stepsDone = 0;
   // std::string envent_file = "/home/yoshi/logs";
   // tensorflow::EventsWriter writer(envent_file);
 
-  auto optimizer = torch::optim::Adam(
+  auto &agent = gAgents[threadNum];
+  auto optimizer = new torch::optim::Adam(
       agent.onlineNet.parameters(),
       torch::optim::AdamOptions().lr(LEARNING_RATE).eps(EPSILON));
 
+  auto &sampleData = gSamples[threadNum];
+  auto &trainData = gTrainDatas[threadNum];
+  AgentInput &input = gAgentInputs[threadNum];
+
   std::deque<float> lossList;
-  TrainData trainData(state, BATCH_SIZE, SEQ_LENGTH, device);
 
   while (1) {
     replay.sample(sampleData);
     dataConverter.toBatchedTrainData(trainData, sampleData.dataList);
-
-    // std::cout << "state " << data.state.sizes() << ", " << data.state.dtype()
-    // << std::endl; std::cout << "action " << data.action.sizes() << ", " <<
-    // data.action.dtype() << std::endl; std::cout << "reward " <<
-    // data.reward.sizes() << ", " << data.reward.dtype() << std::endl;
-    // std::cout << "done " << data.done.sizes() << ", " << data.done.dtype() <<
-    // std::endl; std::cout << "ih " << data.ih.sizes() << ", " <<
-    // data.ih.dtype() << std::endl; std::cout << "hh " << data.hh.sizes() << ",
-    // " << data.hh.dtype() << std::endl; std::cout << "policy " <<
-    // data.policy.sizes() << ", " << data.policy.dtype() << std::endl;
-
-    AgentInput input;
 
     input.state = trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)});
     input.prevAction =
@@ -222,20 +220,23 @@ void Learner::trainLoop() {
             .squeeze(-1),
         trainData.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
         trainData.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        std::move(onlineRet.q), std::move(targetRet.q), device, &optimizer);
+        std::move(onlineRet.q), std::move(targetRet.q), device, optimizer);
 
-    lossList.push_back(lossValue);
-    if (lossList.size() > 100) {
-      lossList.pop_front();
+    // 勾配を集計して設定
+    updateGrad(threadNum, agent.onlineNet);
+
+    // Update the parameters based on the calculated gradients.
+    optimizer->step();
+
+    if (threadNum == 0) {
+      lossList.push_back(lossValue);
+      if (lossList.size() > 100) {
+        lossList.pop_front();
+      }
     }
 
     replay.updatePriorities(sampleData.labelList, sampleData.indexList,
                             priorities);
-
-    // ターゲットネットワーク更新
-    if (stepsDone % TARGET_UPDATE == 0) {
-      agent.targetNet.copyFrom(agent.onlineNet);
-    }
 
     // tensorflow::Event event;
     // tensorflow::Summary::Value* summ_val =
@@ -244,15 +245,20 @@ void Learner::trainLoop() {
     // summ_val->set_simple_value(loss);
     // writer->WriteEvent(event);
 
-    if (stepsDone % 5 == 0) {
+    stepsDone++;
+
+    // ターゲットネットワーク更新
+    if (stepsDone % TARGET_UPDATE == 0) {
+      agent.targetNet.copyFrom(agent.onlineNet);
+    }
+
+    if (threadNum == 0/* && (stepsDone % 5 == 0)*/) {
 
       std::cout << "loss = "
                 << std::accumulate(lossList.begin(), lossList.end(), 0.0) /
                        lossList.size()
-                << ", steps = " << stepsDone << std::endl;
+                << ", steps = " << stepsDone * NUM_TRAIN_THREADS << std::endl;
     }
-
-    stepsDone++;
     // std::cout << "stepsDone " << stepsDone << std::endl;
   }
 }
@@ -263,19 +269,16 @@ int main(void) {
       torch::zeros({1, 84, 84}, torch::TensorOptions().dtype(torch::kUInt8));
   int actionSize = 9;
   int numEnvs = NUM_ENVS;
+  torch::Device device(torch::cuda::is_available() ? torch::kCUDA
+                                                   : torch::kCPU);
 
   Learner learner(stateTensor, actionSize, numEnvs, TRACE_LENGTH, REPLAY_PERIOD,
                   REPLAY_BUFFER_SIZE);
 
   // actorからのリクエスト受付
-  auto inferLoop = std::thread(&Learner::listenActor, &learner);
+  auto inferThread = std::thread(&Learner::listenActor, &learner);
 
-  // optimizer = optim.Adam(agent.online_net.parameters(), lr=LEARNING_RATE,
-  // eps=1e-3)
-
-  learner.trainLoop();
-
-  inferLoop.join();
+  inferThread.join();
 
   return EXIT_SUCCESS;
 }

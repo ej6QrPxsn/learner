@@ -3,6 +3,7 @@
 
 #include <torch/torch.h>
 #include "StructuredData.hpp"
+#include "Models.hpp"
 
 std::tuple<float, torch::Tensor>
 retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
@@ -11,5 +12,6 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
 
 StoredData compress(ReplayData &replayData);
 void decompress(StoredData &compressed, ReplayData &replayData);
+void updateGrad(int threadNum, R2D2Agent &model);
 
 #endif // UTILS_HPP

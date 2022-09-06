@@ -4,6 +4,32 @@
 #include "Common.hpp"
 #include <torch/torch.h>
 
+struct Event {
+  bool notify = false;
+  std::mutex mtx;
+  std::condition_variable cv;
+
+  void wait() {
+    {
+      std::unique_lock<std::mutex> lk(mtx);
+      cv.wait(lk, [&] { return notify; });
+      notify = false;
+    }
+  }
+
+  void set() {
+    // 共有データの更新
+    notify = true;
+    cv.notify_one();
+  }
+
+  void reset() {
+    std::lock_guard<std::mutex> lk(mtx);
+    // 共有データの更新
+    notify = false;
+  }
+};
+
 struct Request {
   int envId;
   uint8_t state[STATE_SIZE];
@@ -40,9 +66,7 @@ struct AgentOutput {
 
 struct ReplayData {
   ReplayData() {}
-  ReplayData & getReplayData() {
-    return *this;
-  }
+  ReplayData &getReplayData() { return *this; }
 
   uint8_t state[SEQ_LENGTH][STATE_SIZE];
   uint8_t action[SEQ_LENGTH];
@@ -56,7 +80,7 @@ struct ReplayData {
 struct Transition : ReplayData {
   Transition() {}
 
-  ReplayData & getReplayData() {
+  ReplayData &getReplayData() {
     std::copy(ih[1], ih[1] + LSTM_STATE_SIZE, ReplayData::ih);
     std::copy(hh[1], hh[1] + LSTM_STATE_SIZE, ReplayData::hh);
 
@@ -110,21 +134,19 @@ struct SampleData {
 };
 
 struct TrainData {
-  TrainData() {}
-  TrainData(torch::Tensor state_, int batchSize, int seqLength,
-            torch::Device device) {
-    auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
-    auto stateShape = state_.sizes();
-    stateSizes.insert(stateSizes.end(), stateShape.begin(), stateShape.end());
+  TrainData() {
+    torch::Device device(torch::cuda::is_available() ? torch::kCUDA
+                                                     : torch::kCPU);
 
-    state = torch::empty(stateSizes, torch::kFloat32).to(device);
-    action = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
+    state = torch::empty({BATCH_SIZE, SEQ_LENGTH, 1, 84, 84}, torch::kFloat32)
+                .to(device);
+    action = torch::empty({BATCH_SIZE, SEQ_LENGTH}, torch::kLong).to(device);
     reward =
-        torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
-    done = torch::empty({batchSize, seqLength, 1}, torch::kBool).to(device);
-    ih = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);
-    hh = torch::empty({batchSize, 1, 512}, torch::kFloat32).to(device);
-    policy = torch::empty({batchSize, seqLength}, torch::kFloat32).to(device);
+        torch::empty({BATCH_SIZE, SEQ_LENGTH, 1}, torch::kFloat32).to(device);
+    done = torch::empty({BATCH_SIZE, SEQ_LENGTH, 1}, torch::kBool).to(device);
+    ih = torch::empty({BATCH_SIZE, 1, 512}, torch::kFloat32).to(device);
+    hh = torch::empty({BATCH_SIZE, 1, 512}, torch::kFloat32).to(device);
+    policy = torch::empty({BATCH_SIZE, SEQ_LENGTH}, torch::kFloat32).to(device);
   }
 
   torch::Tensor state;

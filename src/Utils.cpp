@@ -1,7 +1,15 @@
-#include <zstd.h> // presumes zstd library is installed
 #include "Utils.hpp"
+#include "Models.hpp"
+#include <future>
+#include <zstd.h> // presumes zstd library is installed
 
 using namespace torch::indexing;
+
+std::array<torch::OrderedDict<std::string, at::Tensor>, NUM_TRAIN_THREADS>
+    gParams;
+std::array<Event, NUM_TRAIN_THREADS> gEvents;
+torch::OrderedDict<std::string, at::Tensor> gTotalPrarams;
+std::array<bool, NUM_TRAIN_THREADS> gGetGrads;
 
 inline auto h(torch::Tensor x) {
   auto eps = RESCALING_EPSILON;
@@ -137,8 +145,6 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
     optimizer->zero_grad();
     // Compute gradients of the loss w.r.t. the parameters of our model.
     loss.backward();
-    // Update the parameters based on the calculated gradients.
-    optimizer->step();
   }
 
   return {loss.item<float>(), priorities.detach()};
@@ -169,5 +175,69 @@ void decompress(StoredData &compressed, ReplayData &replayData) {
   auto code = ZSTD_isError(decompressedSize);
   if (code) {
     exit(code);
+  }
+}
+
+void updateGrad(int threadNum, R2D2Agent &model) {
+
+  auto currentParams = model.named_parameters(true /*recurse*/);
+  gGetGrads[threadNum] = true;
+
+  if (std::count(gGetGrads.begin(), gGetGrads.end(), true) ==
+      NUM_TRAIN_THREADS) {
+    gTotalPrarams = currentParams;
+
+    // すべてのパラメーター
+    for (auto &val : gTotalPrarams) {
+      torch::Tensor tmpGradItem;
+      auto name = val.key();
+      auto *totalGradItem = gTotalPrarams.find(name);
+      if (totalGradItem != nullptr) {
+        tmpGradItem = totalGradItem->grad();
+      }
+
+      // std::cout << name << ": " << totalGrad.index({0, 0}) << std::endl;
+
+      // 自分ベースの変数に自分以外のスレッドの勾配を足す
+      for (int i = 0; i < NUM_TRAIN_THREADS; i++) {
+        if (i != threadNum) {
+          auto *t = gParams[i].find(name);
+          if (t != nullptr) {
+            // std::cout << thread << ": " << t->grad().index({0, 0}) <<
+            // std::endl;
+            tmpGradItem += t->grad();
+          }
+        }
+      }
+      // std::cout << "totalGrad: " << totalGrad.index({0, 0}) << std::endl;
+
+      // 集計した勾配をグローバル変数に設定
+      totalGradItem->mutable_grad() = tmpGradItem;
+    }
+
+    // 勾配取得状態クリア
+    std::fill(gGetGrads.begin(), gGetGrads.end(), false);
+
+    // 他スレッド再開
+    for (int i = 0; i < NUM_TRAIN_THREADS; i++) {
+      if (i != threadNum) {
+        gEvents[i].set();
+      }
+    }
+
+  } else {
+    gParams[threadNum] = currentParams;
+
+    // 集計が終わるまで待つ
+    gEvents[threadNum].wait();
+  }
+
+  // 集計した勾配をすべてのパラメーターに設定する
+  for (auto &gVal : gTotalPrarams) {
+    auto name = gVal.key();
+    auto *currentItem = currentParams.find(name);
+    if (currentItem != nullptr) {
+      currentItem->mutable_grad() = gVal.value().grad();
+    }
   }
 }

@@ -17,13 +17,13 @@ public:
     std::promise<void> bufferNotification;
     replayDataFuture = bufferNotification.get_future();
 
-    addThread =
-        std::thread(&Replay::addLoop, this, std::move(bufferNotification));
+    replayThread =
+        std::thread(&Replay::replayLoop, this, std::move(bufferNotification));
   }
 
-  void updatePriorities(std::array<int, BATCH_SIZE> labels,
-                        std::array<int, BATCH_SIZE> indexes,
-                        torch::Tensor priorities) {
+  void updatePriorities(std::array<int, BATCH_SIZE> &labels,
+                        std::array<int, BATCH_SIZE> &indexes,
+                        torch::Tensor &priorities) {
     for (int i = 0; i < indexes.size(); i++) {
       if (labels[i] == REPLAY) {
         replayBuffer.update(indexes[i], priorities.index({i}).item<float>());
@@ -88,7 +88,7 @@ public:
     }
   }
 
-  void addLoop(std::promise<void> ReplayDataPromise) {
+  void replayLoop(std::promise<void> ReplayDataPromise) {
     while (replayBuffer.get_count() < REPLAY_BUFFER_MIN_SIZE) {
       addReplay();
     }
@@ -134,19 +134,17 @@ public:
   std::uniform_real_distribution<> dist;
 
   std::future<void> replayDataFuture;
-  std::thread addThread;
-  std::thread sampleThread;
+  std::thread replayThread;
+
   DataConverter dataConverter;
   ReplayBuffer replayBuffer;
   ReplayBuffer highRewardBuffer;
   std::vector<float> highRewards;
 
+
   std::deque<std::tuple<torch::Tensor, std::vector<StoredData>>> replayQueue;
   std::mutex replayMtx;
   std::condition_variable replayCond;
-  std::mutex sampleMtx;
-  std::condition_variable sampleCond;
-  bool isSample = false;
 };
 
 #endif // REPLAY_HPP
