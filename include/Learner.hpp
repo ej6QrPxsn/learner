@@ -15,6 +15,7 @@ public:
   Learner(torch::Tensor state_, int actionSize_, int numEnvs_, int traceLength,
           int replayPeriod, int capacity)
       : numEnvs(numEnvs_), actionSize(actionSize_), state(state_),
+        inferModel(1, actionSize_),
         dataConverter(state_, actionSize_, 1 + replayPeriod + traceLength),
         replay(dataConverter, capacity) {
 
@@ -25,7 +26,7 @@ public:
 
   int listenActor();
   int sendAndRecieveActor(int fd_other);
-  int inference(R2D2Agent &model, Request &request, AgentInput &agentInput,
+  int inference(Request &request, AgentInput &agentInput,
                 torch::Device device, LocalBuffer &localBuffer);
   Replay *getReplay() { return &replay; }
   void trainLoop(int threadNum);
@@ -38,6 +39,7 @@ private:
   int nextUseIndex = 1;
   int freeIndex = 1;
 
+  R2D2Agent inferModel;
   std::thread trainThread[NUM_TRAIN_THREADS];
   torch::Tensor state;
   DataConverter dataConverter;

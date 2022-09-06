@@ -16,6 +16,8 @@ public:
   }
   R2D2Agent onlineNet;
   R2D2Agent targetNet;
+
+  int trainCount = 0;
 };
 
 #endif // AGENT_HPP

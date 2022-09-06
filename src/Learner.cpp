@@ -97,22 +97,21 @@ int Learner::sendAndRecieveActor(int fd_other) {
   int action;
   int envId;
   int steps = 0;
-  torch::Device device(torch::cuda::is_available() ? torch::kCUDA
-                                                   : torch::kCPU);
-  LocalBuffer localBuffer(state, numEnvs, device);
+  int prevTrainCount = 0;
 
+  torch::Device device(torch::kCPU);
+  
+  LocalBuffer localBuffer(state, numEnvs, device);
   AgentInput agentInput(state, 1, 1, device);
 
   // アクター番号
   size = recv(fd_other, &envId, sizeof(envId), 0);
 
-  auto &model = gAgents[envId % NUM_TRAIN_THREADS].onlineNet;
-
   while (1) {
     // データ本体の受信
     size = recv(fd_other, &request, sizeof(request), 0);
 
-    action = inference(model, request, agentInput, device, localBuffer);
+    action = inference(request, agentInput, device, localBuffer);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -120,10 +119,16 @@ int Learner::sendAndRecieveActor(int fd_other) {
     }
 
     steps++;
+
+    if (gAgents[0].trainCount != prevTrainCount && steps % 100 == 0 &&
+        request.envId == 0) {
+      prevTrainCount = gAgents[0].trainCount;
+      inferModel.copyFrom(gAgents[0].onlineNet);
+    }
   }
 }
 
-int Learner::inference(R2D2Agent &model, Request &request,
+int Learner::inference(Request &request,
                        AgentInput &agentInput, torch::Device device,
                        LocalBuffer &localBuffer) {
   int action;
@@ -133,7 +138,7 @@ int Learner::inference(R2D2Agent &model, Request &request,
 
   {
     c10::InferenceMode guard(true);
-    agentOutput = model.forward(agentInput);
+    agentOutput = inferModel.forward(agentInput);
   }
 
   auto q = agentOutput.q.cpu();
@@ -228,6 +233,8 @@ void Learner::trainLoop(int threadNum) {
     // Update the parameters based on the calculated gradients.
     optimizer->step();
 
+    agent.trainCount++;
+
     if (threadNum == 0) {
       lossList.push_back(lossValue);
       if (lossList.size() > 100) {
@@ -252,7 +259,7 @@ void Learner::trainLoop(int threadNum) {
       agent.targetNet.copyFrom(agent.onlineNet);
     }
 
-    if (threadNum == 0/* && (stepsDone % 5 == 0)*/) {
+    if (threadNum == 0 /* && (stepsDone % 5 == 0)*/) {
 
       std::cout << "loss = "
                 << std::accumulate(lossList.begin(), lossList.end(), 0.0) /
