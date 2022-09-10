@@ -266,6 +266,11 @@ void Learner::trainLoop(int threadNum) {
                        lossList.size()
                 << ", steps = " << stepsDone * NUM_TRAIN_THREADS << std::endl;
     }
+
+    // モデル保存
+    if (threadNum == 0 && (stepsDone % 1000 == 0)) {
+      agent.onlineNet.saveStateDict("model.pt");
+    }
     // std::cout << "stepsDone " << stepsDone << std::endl;
   }
 }
@@ -278,6 +283,12 @@ int main(void) {
   int numEnvs = NUM_ENVS;
   torch::Device device(torch::cuda::is_available() ? torch::kCUDA
                                                    : torch::kCPU);
+
+  // 訓練モデルのパラメーターを合わせる
+  for (auto i = 1; i < NUM_TRAIN_THREADS; i++) {
+    gAgents[i].onlineNet.copyFrom(gAgents[0].onlineNet);
+    gAgents[i].targetNet.copyFrom(gAgents[0].targetNet);
+  }
 
   Learner learner(stateTensor, actionSize, numEnvs, TRACE_LENGTH, REPLAY_PERIOD,
                   REPLAY_BUFFER_SIZE);

@@ -24,5 +24,5 @@ file(GLOB learner_SRC
 
 add_executable(learner ${learner_SRC})
 
-target_include_directories(learner PUBLIC ./include)
+target_include_directories(learner PUBLIC ./include $ENV{HOME}/dev/zstd/lib)
 target_link_libraries(learner ${TORCH_LIBRARIES} zstd::libzstd_static)

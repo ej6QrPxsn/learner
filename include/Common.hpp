@@ -30,7 +30,7 @@ const auto HIGH_REWARD = 2;
 
 const auto ACTION_SIZE = 9;
 const auto NUM_ENVS = 16;
-const auto NUM_TRAIN_THREADS = 6;
+const auto NUM_TRAIN_THREADS = 5;
 
 const auto STATE_SIZE = 84 * 84;
 const auto LSTM_STATE_SIZE = 512;
