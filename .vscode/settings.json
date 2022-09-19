@@ -82,5 +82,10 @@
         "__tree": "cpp",
         "filesystem": "cpp",
         "queue": "cpp"
+    },
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.build/**": true
     }
 }
