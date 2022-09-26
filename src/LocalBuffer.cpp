@@ -2,15 +2,19 @@
 #include "Utils.hpp"
 
 using namespace torch::indexing;
-std::mutex mtx;
 
 void LocalBuffer::setInferenceParam(Request &request, AgentInput *inferData) {
 
   inferData->state.index_put_(
       {0, 0},
       torch::from_blob(request.state, stateShape, torch::kUInt8) / 255.0);
+
   inferData->prevAction.index_put_({0}, prevAction);
   inferData->prevReward.index_put_({0}, prevReward);
+
+  // ここから以前へ遡る必要はないので、念のため、detachしておく
+  inferData->hiddenStates = prevHiddenStates.detach();
+  inferData->cellStates = prevCellStates.detach();
 }
 
 void LocalBuffer::setRetaceData() {
@@ -47,10 +51,9 @@ void LocalBuffer::setRetaceData() {
 bool LocalBuffer::updateAndGetTransition(Request &request,
                                          torch::Tensor &actionTensor,
                                          torch::Tensor &q,
-                                         AgentOutput &agentOutput,
+                                         LstmStates &lstmStates,
                                          torch::Tensor &policy) {
-  auto action = actionTensor.item<u_int8_t>();
-
+  auto action = actionTensor.item<int>();
   prevAction = action;
   prevReward = request.reward;
 
@@ -58,17 +61,22 @@ bool LocalBuffer::updateAndGetTransition(Request &request,
   transition.action[index] = action;
   transition.reward[index] = request.reward;
   transition.done[index] = request.done;
-  std::copy(prevIh, prevIh + LSTM_STATE_SIZE, transition.ih[index]);
-  std::copy(prevHh, prevHh + LSTM_STATE_SIZE, transition.hh[index]);
+
+  // ここで受け取るLSTM状態は、推論後の最新のものなので、一つ前の状態を設定する
+  auto prevHiddenStatesBuf = prevHiddenStates.contiguous().data_ptr<float>();
+  std::copy(prevHiddenStatesBuf, prevHiddenStatesBuf + LSTM_STATE_SIZE,
+            transition.hiddenStates[index]);
+  auto prevCellStatesBuf = prevCellStates.contiguous().data_ptr<float>();
+  std::copy(prevCellStatesBuf, prevCellStatesBuf + LSTM_STATE_SIZE,
+            transition.cellStates[index]);
+
   auto qBuf = q.contiguous().data_ptr<float>();
   std::copy(qBuf, qBuf + ACTION_SIZE, transition.q[index]);
   transition.policy[index] = policy.item<float>();
 
-  // value <- batch(1), seq(1), value
-  auto ihBuf = agentOutput.ih.cpu().contiguous().data_ptr<float>();
-  std::copy(ihBuf, ihBuf + LSTM_STATE_SIZE, prevIh);
-  auto hhBuf = agentOutput.hh.cpu().contiguous().data_ptr<float>();
-  std::copy(hhBuf, hhBuf + LSTM_STATE_SIZE, prevHh);
+  auto [hiddenStates, cellStates] = lstmStates;
+  prevHiddenStates = hiddenStates.detach().clone();
+  prevCellStates = cellStates.detach().clone();
 
   index++;
 
@@ -78,13 +86,14 @@ bool LocalBuffer::updateAndGetTransition(Request &request,
         std::accumulate(transition.reward, transition.reward + index, 0.0);
 
     if (request.done) {
-      std::fill(prevIh, prevIh + LSTM_STATE_SIZE, 0);
-      std::fill(prevHh, prevHh + LSTM_STATE_SIZE, 0);
+      prevHiddenStates = torch::zeros({1, LSTM_STATE_SIZE});
+      prevCellStates = torch::zeros({1, LSTM_STATE_SIZE});
+
       prevAction = 0;
       prevReward = 0;
 
       if (index > REPLAY_PERIOD + 1) {
-        // 現在位置から最後までゼロクリア
+        // 現在位置（次の現在位置）から最後までゼロクリア
         std::fill(transition.state[index], transition.state[SEQ_LENGTH], 0);
         std::fill(&transition.action[index], &transition.action[SEQ_LENGTH], 0);
         std::fill(&transition.reward[index], &transition.reward[SEQ_LENGTH], 0);
@@ -126,10 +135,12 @@ bool LocalBuffer::updateAndGetTransition(Request &request,
                 &transition.done[SEQ_LENGTH], (bool *)transition.done);
       std::move(&transition.policy[SEQ_LENGTH] - REPLAY_PERIOD,
                 &transition.policy[SEQ_LENGTH], (float *)transition.policy);
-      std::move(transition.ih[SEQ_LENGTH] - REPLAY_PERIOD,
-                transition.ih[SEQ_LENGTH], (float *)transition.ih);
-      std::move(transition.hh[SEQ_LENGTH] - REPLAY_PERIOD,
-                transition.hh[SEQ_LENGTH], (float *)transition.hh);
+      std::move(transition.hiddenStates[SEQ_LENGTH] - REPLAY_PERIOD,
+                transition.hiddenStates[SEQ_LENGTH],
+                (float *)transition.hiddenStates);
+      std::move(transition.cellStates[SEQ_LENGTH] - REPLAY_PERIOD,
+                transition.cellStates[SEQ_LENGTH],
+                (float *)transition.cellStates);
       std::move(transition.q[SEQ_LENGTH] - REPLAY_PERIOD,
                 transition.q[SEQ_LENGTH], (float *)transition.q);
       index = REPLAY_PERIOD;

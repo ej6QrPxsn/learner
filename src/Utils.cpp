@@ -1,15 +1,8 @@
-#include "Utils.hpp"
 #include "Models.hpp"
 #include <future>
 #include <zstd.h> // presumes zstd library is installed
 
 using namespace torch::indexing;
-
-std::array<torch::OrderedDict<std::string, at::Tensor>, NUM_TRAIN_THREADS>
-    gParams;
-std::array<Event, NUM_TRAIN_THREADS> gEvents;
-torch::OrderedDict<std::string, at::Tensor> gTotalPrarams;
-std::array<bool, NUM_TRAIN_THREADS> gGetGrads;
 
 inline auto h(torch::Tensor x) {
   auto eps = RESCALING_EPSILON;
@@ -49,9 +42,10 @@ inline auto getRetraceOperatorSigma(int s, torch::Tensor td,
 }
 
 std::tuple<float, torch::Tensor>
-retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
-            torch::Tensor policy, torch::Tensor onlineQ, torch::Tensor targetQ,
-            torch::Device device, torch::optim::Adam *optimizer) {
+retraceLoss(const torch::Tensor action, const torch::Tensor reward,
+            const torch::Tensor done, const torch::Tensor policy,
+            const torch::Tensor onlineQ, const torch::Tensor targetQ,
+            const torch::Device device, bool backward) {
   auto batchSize = action.size(0);
   auto retraceLength = action.size(1) - 1;
 
@@ -72,7 +66,6 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
 
   auto nextTargetPolicy =
       torch::softmax(targetQ.index({Slice(), Slice(1, None)}), 2);
-  // std::cout << "nextTargetPolicy: " << nextTargetPolicy.sizes() << std::endl;
   // std::cout << "targetQ: " << targetQ.index({Slice(), Slice(1,
   // None)}).sizes() << std::endl; std::cout << "torch::sum: " << torch::sum(
   // h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})),
@@ -83,10 +76,11 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
       torch::sum(
           h_1(nextTargetPolicy * targetQ.index({Slice(), Slice(1, None)})), 2);
 
-  // std::cout << "reward.index({Slice(), Slice(None, -1)}): " <<
-  // reward.index({Slice(), Slice(None, -1)}).sizes() << std::endl; std::cout <<
-  // "nextTargetQValue: " << nextTargetQValue.sizes() << std::endl; std::cout <<
-  // "currentTargetQValue: " << currentTargetQValue.sizes() << std::endl;
+  // std::cout << "reward.index({Slice(), Slice(None, -1)}): "
+  //           << reward.index({Slice(), Slice(None, -1)}).sizes() << std::endl;
+  // std::cout << "nextTargetPolicy: " << nextTargetPolicy.sizes() << std::endl;
+  // std::cout << "currentTargetQValue: " << currentTargetQValue.sizes()
+  //           << std::endl;
   auto td = reward.index({Slice(), Slice(None, -1)}) + nextTargetQValue -
             currentTargetQValue;
   // std::cout << "td: " << td.sizes() << std::endl;
@@ -140,14 +134,12 @@ retraceLoss(torch::Tensor action, torch::Tensor reward, torch::Tensor done,
 
   auto loss = torch::mean(losses);
 
-  if (optimizer != nullptr) {
-    // Reset gradients.
-    optimizer->zero_grad();
+  if (backward) {
     // Compute gradients of the loss w.r.t. the parameters of our model.
     loss.backward();
   }
 
-  return {loss.item<float>(), priorities.detach()};
+  return {loss.item<float>(), priorities.detach().clone()};
 }
 
 StoredData compress(ReplayData &replayData) {
@@ -178,66 +170,33 @@ void decompress(StoredData &compressed, ReplayData &replayData) {
   }
 }
 
-void updateGrad(int threadNum, R2D2Agent &model) {
+void toBatchedTrainData(TrainData &train,
+                        std::array<ReplayData, BATCH_SIZE> &dataList) {
 
-  auto currentParams = model.named_parameters(true /*recurse*/);
-  gGetGrads[threadNum] = true;
-
-  if (std::count(gGetGrads.begin(), gGetGrads.end(), true) ==
-      NUM_TRAIN_THREADS) {
-    gTotalPrarams = currentParams;
-
-    // すべてのパラメーター
-    for (auto &val : gTotalPrarams) {
-      torch::Tensor tmpGradItem;
-      auto name = val.key();
-      auto *totalGradItem = gTotalPrarams.find(name);
-      if (totalGradItem != nullptr) {
-        tmpGradItem = totalGradItem->grad();
-      }
-
-      // std::cout << name << ": " << totalGrad.index({0, 0}) << std::endl;
-
-      // 自分ベースの変数に自分以外のスレッドの勾配を足す
-      for (int i = 0; i < NUM_TRAIN_THREADS; i++) {
-        if (i != threadNum) {
-          auto *t = gParams[i].find(name);
-          if (t != nullptr) {
-            // std::cout << thread << ": " << t->grad().index({0, 0}) <<
-            // std::endl;
-            tmpGradItem += t->grad();
-          }
-        }
-      }
-      // std::cout << "totalGrad: " << totalGrad.index({0, 0}) << std::endl;
-
-      // 集計した勾配をグローバル変数に設定
-      totalGradItem->mutable_grad() = tmpGradItem;
-    }
-
-    // 勾配取得状態クリア
-    std::fill(gGetGrads.begin(), gGetGrads.end(), false);
-
-    // 他スレッド再開
-    for (int i = 0; i < NUM_TRAIN_THREADS; i++) {
-      if (i != threadNum) {
-        gEvents[i].set();
-      }
-    }
-
-  } else {
-    gParams[threadNum] = currentParams;
-
-    // 集計が終わるまで待つ
-    gEvents[threadNum].wait();
-  }
-
-  // 集計した勾配をすべてのパラメーターに設定する
-  for (auto &gVal : gTotalPrarams) {
-    auto name = gVal.key();
-    auto *currentItem = currentParams.find(name);
-    if (currentItem != nullptr) {
-      currentItem->mutable_grad() = gVal.value().grad();
-    }
+  for (int i = 0; i < BATCH_SIZE; i++) {
+    train.state.index_put_({i}, torch::from_blob(dataList[i].state,
+                                                 train.state.index({i}).sizes(),
+                                                 torch::kUInt8) /
+                                    255.0);
+    train.action.index_put_(
+        {i}, torch::from_blob(dataList[i].action,
+                              train.action.index({i}).sizes(), torch::kUInt8));
+    train.reward.index_put_(
+        {i}, torch::from_blob(dataList[i].reward,
+                              train.reward.index({i}).sizes(), torch::kFloat));
+    train.done.index_put_({i}, torch::from_blob(dataList[i].done,
+                                                train.done.index({i}).sizes(),
+                                                torch::kBool));
+    train.hiddenStates.index_put_(
+        {i},
+        torch::from_blob(dataList[i].hiddenStates,
+                         train.hiddenStates.index({i}).sizes(), torch::kFloat));
+    train.cellStates.index_put_(
+        {i},
+        torch::from_blob(dataList[i].cellStates,
+                         train.cellStates.index({i}).sizes(), torch::kFloat));
+    train.policy.index_put_(
+        {i}, torch::from_blob(dataList[i].policy,
+                              train.policy.index({i}).sizes(), torch::kFloat));
   }
 }

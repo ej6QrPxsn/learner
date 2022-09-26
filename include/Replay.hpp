@@ -10,9 +10,9 @@
 
 class Replay {
 public:
-  Replay(DataConverter converter, int capacity)
-      : dataConverter(converter), replayBuffer(capacity), engine(rnd()),
-        dist(0.0, 1.0), highRewards(HIGH_REWARD_SIZE, 0),
+  Replay(int capacity)
+      : replayBuffer(capacity), engine(rnd()), dist(0.0, 1.0),
+        highRewards(HIGH_REWARD_SIZE, 0),
         highRewardBuffer(HIGH_REWARD_BUFFER_SIZE) {
     std::promise<void> bufferNotification;
     replayDataFuture = bufferNotification.get_future();
@@ -136,11 +136,9 @@ public:
   std::future<void> replayDataFuture;
   std::thread replayThread;
 
-  DataConverter dataConverter;
   ReplayBuffer replayBuffer;
   ReplayBuffer highRewardBuffer;
   std::vector<float> highRewards;
-
 
   std::deque<std::tuple<torch::Tensor, std::vector<StoredData>>> replayQueue;
   std::mutex replayMtx;

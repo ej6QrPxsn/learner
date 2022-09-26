@@ -4,6 +4,22 @@
 #include "Common.hpp"
 #include <torch/torch.h>
 
+using NamedParameters = torch::OrderedDict<std::string, at::Tensor>;
+
+// struct LstmStates {
+//   LstmStates() {}
+//   LstmStates(int batch, torch::Device device)
+//       : hiddeState(torch::empty({batch, LSTM_STATE_SIZE}).to(device)),
+//         cellState(torch::empty({batch, LSTM_STATE_SIZE}).to(device)) {}
+//   LstmStates(torch::Tensor hs, torch::Tensor cs)
+//       : hiddeState(hs), cellState(cs) {}
+//   torch::Tensor hiddeState;
+//   torch::Tensor cellState;
+// };
+
+using LstmStates = std::tuple<torch::Tensor, torch::Tensor>;
+using AgentOutput = std::tuple<torch::Tensor, LstmStates>;
+
 struct Event {
   bool notify = false;
   std::mutex mtx;
@@ -20,7 +36,7 @@ struct Event {
   void set() {
     // 共有データの更新
     notify = true;
-    cv.notify_one();
+    cv.notify_all();
   }
 
   void reset() {
@@ -38,7 +54,6 @@ struct Request {
 } __attribute__((packed));
 
 struct AgentInput {
-  AgentInput() {}
   AgentInput(torch::Tensor state_, int batchSize, int seqLength,
              torch::Device device) {
     auto stateSizes = std::vector<int64_t>{batchSize, seqLength};
@@ -49,19 +64,22 @@ struct AgentInput {
     prevAction = torch::empty({batchSize, seqLength}, torch::kLong).to(device);
     prevReward =
         torch::empty({batchSize, seqLength, 1}, torch::kFloat32).to(device);
+    hiddenStates =
+        torch::empty({batchSize, LSTM_STATE_SIZE}, torch::kFloat32).to(device);
+    cellStates =
+        torch::empty({batchSize, LSTM_STATE_SIZE}, torch::kFloat32).to(device);
   }
+  AgentInput(torch::Tensor state_, torch::Tensor prevAction_,
+             torch::Tensor prevReward_, torch::Tensor hiddenStates_,
+             torch::Tensor cellStates_)
+      : state(state_), prevAction(prevAction_), prevReward(prevReward_),
+        hiddenStates(hiddenStates_), cellStates(cellStates_) {}
 
   torch::Tensor state;
   torch::Tensor prevAction;
   torch::Tensor prevReward;
-  torch::Tensor *ih = nullptr;
-  torch::Tensor *hh = nullptr;
-};
-
-struct AgentOutput {
-  torch::Tensor ih;
-  torch::Tensor hh;
-  torch::Tensor q;
+  torch::Tensor hiddenStates;
+  torch::Tensor cellStates;
 };
 
 struct ReplayData {
@@ -72,8 +90,8 @@ struct ReplayData {
   uint8_t action[SEQ_LENGTH];
   float reward[SEQ_LENGTH];
   float policy[SEQ_LENGTH];
-  float ih[LSTM_STATE_SIZE];
-  float hh[LSTM_STATE_SIZE];
+  float hiddenStates[LSTM_STATE_SIZE];
+  float cellStates[LSTM_STATE_SIZE];
   bool done[SEQ_LENGTH];
 };
 
@@ -81,14 +99,16 @@ struct Transition : ReplayData {
   Transition() {}
 
   ReplayData &getReplayData() {
-    std::copy(ih[1], ih[1] + LSTM_STATE_SIZE, ReplayData::ih);
-    std::copy(hh[1], hh[1] + LSTM_STATE_SIZE, ReplayData::hh);
+    std::copy(hiddenStates[1], hiddenStates[1] + LSTM_STATE_SIZE,
+              ReplayData::hiddenStates);
+    std::copy(cellStates[1], cellStates[1] + LSTM_STATE_SIZE,
+              ReplayData::cellStates);
 
     return ReplayData::getReplayData();
   }
 
-  float ih[SEQ_LENGTH][LSTM_STATE_SIZE];
-  float hh[SEQ_LENGTH][LSTM_STATE_SIZE];
+  float hiddenStates[SEQ_LENGTH][LSTM_STATE_SIZE];
+  float cellStates[SEQ_LENGTH][LSTM_STATE_SIZE];
   float q[SEQ_LENGTH][ACTION_SIZE];
 };
 
@@ -144,8 +164,17 @@ struct TrainData {
     reward =
         torch::empty({BATCH_SIZE, SEQ_LENGTH, 1}, torch::kFloat32).to(device);
     done = torch::empty({BATCH_SIZE, SEQ_LENGTH, 1}, torch::kBool).to(device);
-    ih = torch::empty({BATCH_SIZE, 1, 512}, torch::kFloat32).to(device);
-    hh = torch::empty({BATCH_SIZE, 1, 512}, torch::kFloat32).to(device);
+
+    auto options = torch::TensorOptions()
+                       .dtype(torch::kFloat32)
+                       //  .layout(torch::kStrided)
+                       //  .device(torch::kCUDA, 1)
+                       .requires_grad(true);
+
+    hiddenStates =
+        torch::empty({BATCH_SIZE, LSTM_STATE_SIZE}, options).to(device);
+    cellStates =
+        torch::empty({BATCH_SIZE, LSTM_STATE_SIZE}, options).to(device);
     policy = torch::empty({BATCH_SIZE, SEQ_LENGTH}, torch::kFloat32).to(device);
   }
 
@@ -153,8 +182,8 @@ struct TrainData {
   torch::Tensor action;
   torch::Tensor reward;
   torch::Tensor done;
-  torch::Tensor ih;
-  torch::Tensor hh;
+  torch::Tensor hiddenStates;
+  torch::Tensor cellStates;
   torch::Tensor policy;
 };
 

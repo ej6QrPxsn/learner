@@ -2,7 +2,6 @@
 #define LEARNER_HPP
 
 #include "Agent.hpp"
-#include "DataConverter.hpp"
 #include "LocalBuffer.hpp"
 #include "Replay.hpp"
 
@@ -15,9 +14,11 @@ public:
   Learner(torch::Tensor state_, int actionSize_, int numEnvs_, int traceLength,
           int replayPeriod, int capacity)
       : numEnvs(numEnvs_), actionSize(actionSize_), state(state_),
-        inferModel(1, actionSize_),
-        dataConverter(state_, actionSize_, 1 + replayPeriod + traceLength),
-        replay(dataConverter, capacity) {
+        replay(capacity) {
+
+    inferStateSizes = std::vector<int64_t>{1, 1};
+    inferStateSizes.insert(inferStateSizes.end(), state_.sizes().begin(),
+                           state_.sizes().end());
 
     for (int i = 0; i < NUM_TRAIN_THREADS; i++) {
       trainThread[i] = std::thread(&Learner::trainLoop, this, i);
@@ -25,8 +26,8 @@ public:
   }
 
   int listenActor();
-  int sendAndRecieveActor(int fd_other);
-  int inference(Request &request, AgentInput &agentInput,
+  int sendAndRecieveActor(int fd_other, R2D2Agent inferModel);
+  int inference(R2D2Agent &inferModel, Request &request, AgentInput &agentInput,
                 torch::Device device, LocalBuffer &localBuffer);
   Replay *getReplay() { return &replay; }
   void trainLoop(int threadNum);
@@ -39,10 +40,9 @@ private:
   int nextUseIndex = 1;
   int freeIndex = 1;
 
-  R2D2Agent inferModel;
+  std::vector<int64_t> inferStateSizes;
   std::thread trainThread[NUM_TRAIN_THREADS];
   torch::Tensor state;
-  DataConverter dataConverter;
   Replay replay;
 };
 

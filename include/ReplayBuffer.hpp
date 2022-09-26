@@ -1,10 +1,10 @@
 #ifndef REPLAY_BUFFER_HPP
 #define REPLAY_BUFFER_HPP
 
-#include <random>
-#include "Utils.hpp"
 #include "SumTree.hpp"
+#include "Utils.hpp"
 #include <memory>
+#include <random>
 
 class ReplayBuffer {
 public:
@@ -35,7 +35,7 @@ public:
     }
   }
 
-  void sample(int n, SampleData & sampleData, int baseSize) {
+  void sample(int n, SampleData &sampleData, int baseSize) {
     std::random_device rd;
     std::default_random_engine eng(rd());
 
@@ -53,7 +53,7 @@ public:
       }
       auto ret = tree.get(s);
       auto index = std::get<0>(ret);
-      auto & data = std::get<1>(ret);
+      auto &data = std::get<1>(ret);
 
       //(idx, p, data)
       sampleData.indexList[i + baseSize] = index;

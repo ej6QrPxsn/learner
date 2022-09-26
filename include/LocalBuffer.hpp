@@ -9,6 +9,8 @@ class LocalBuffer {
 public:
   LocalBuffer(torch::Tensor state_, int numEnvs, torch::Device device_)
       : stateShape(state_.sizes()), device(device_),
+        prevHiddenStates(torch::zeros({1, LSTM_STATE_SIZE})),
+        prevCellStates(torch::zeros({1, LSTM_STATE_SIZE})),
         retraceData(BATCH_SIZE, 1 + TRACE_LENGTH, ACTION_SIZE, device_) {}
 
   RetraceData &getRetraceData() { return retraceData; }
@@ -22,19 +24,20 @@ public:
   void setInferenceParam(Request &request, AgentInput *inferData);
   void inline setRetaceData();
   bool updateAndGetTransition(Request &request, torch::Tensor &action,
-                              torch::Tensor &q, AgentOutput &agentOutput,
+                              torch::Tensor &q, LstmStates &lstmStates,
                               torch::Tensor &policy);
 
 private:
   torch::Device device;
+  int prevAction;
   c10::IntArrayRef stateShape;
   Transition transition;
+
   int index = 0;
   int retraceIndex = 0;
-  uint8_t prevAction;
   float prevReward;
-  float prevIh[LSTM_STATE_SIZE];
-  float prevHh[LSTM_STATE_SIZE];
+  torch::Tensor prevHiddenStates;
+  torch::Tensor prevCellStates;
   RetraceData retraceData;
   std::vector<StoredData> storedDatas;
 };

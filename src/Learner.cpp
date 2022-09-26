@@ -1,4 +1,5 @@
 #include "Learner.hpp"
+#include "CalculateGrad.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <pwd.h>
@@ -12,8 +13,10 @@
 using namespace torch::indexing;
 std::vector<Agent> gAgents(NUM_TRAIN_THREADS, Agent(ACTION_SIZE));
 std::array<SampleData, NUM_TRAIN_THREADS> gSamples;
-std::array<AgentInput, NUM_TRAIN_THREADS> gAgentInputs;
 std::array<TrainData, NUM_TRAIN_THREADS> gTrainDatas;
+NamedParameters gTrainParams;
+NamedParameters gTrainBuffers;
+int gTrainCount = 0;
 
 int Learner::listenActor() {
 
@@ -68,6 +71,10 @@ int Learner::listenActor() {
 
   std::vector<std::thread> threadList;
 
+  R2D2Agent inferModel(1, ACTION_SIZE);
+  // 推論モデルの計算グラフは切っておく
+  inferModel.detach_();
+
   // 無限ループのサーバー処理
   while (1) {
     // printf("accept wating...\n");
@@ -79,7 +86,8 @@ int Learner::listenActor() {
       continue;
     }
 
-    auto t = std::thread(&Learner::sendAndRecieveActor, this, fd_other);
+    auto t =
+        std::thread(&Learner::sendAndRecieveActor, this, fd_other, inferModel);
 
     threadList.emplace_back(std::move(t));
   }
@@ -91,7 +99,7 @@ int Learner::listenActor() {
   return 0;
 }
 
-int Learner::sendAndRecieveActor(int fd_other) {
+int Learner::sendAndRecieveActor(int fd_other, R2D2Agent inferModel) {
   size_t size;
   Request request;
   int action;
@@ -100,7 +108,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
   int prevTrainCount = 0;
 
   torch::Device device(torch::kCPU);
-  
+
   LocalBuffer localBuffer(state, numEnvs, device);
   AgentInput agentInput(state, 1, 1, device);
 
@@ -111,7 +119,7 @@ int Learner::sendAndRecieveActor(int fd_other) {
     // データ本体の受信
     size = recv(fd_other, &request, sizeof(request), 0);
 
-    action = inference(request, agentInput, device, localBuffer);
+    action = inference(inferModel, request, agentInput, device, localBuffer);
 
     size = send(fd_other, &action, sizeof(action), 0);
     if (size < 0) {
@@ -120,28 +128,25 @@ int Learner::sendAndRecieveActor(int fd_other) {
 
     steps++;
 
-    if (gAgents[0].trainCount != prevTrainCount && steps % 100 == 0 &&
-        request.envId == 0) {
-      prevTrainCount = gAgents[0].trainCount;
-      inferModel.copyFrom(gAgents[0].onlineNet);
+    if (gTrainCount != prevTrainCount && steps % 100 == 0 && envId == 0) {
+      prevTrainCount = gTrainCount;
+      inferModel.copyParams(gTrainParams, gTrainBuffers);
     }
   }
 }
 
-int Learner::inference(Request &request,
+int Learner::inference(R2D2Agent &inferModel, Request &request,
                        AgentInput &agentInput, torch::Device device,
                        LocalBuffer &localBuffer) {
   int action;
-  AgentOutput agentOutput;
 
   localBuffer.setInferenceParam(request, &agentInput);
 
-  {
-    c10::InferenceMode guard(true);
-    agentOutput = inferModel.forward(agentInput);
-  }
+  AgentOutput out = inferModel.forward(
+      agentInput.state, agentInput.prevAction, agentInput.prevReward,
+      LstmStates(agentInput.hiddenStates, agentInput.cellStates), device);
 
-  auto q = agentOutput.q.cpu();
+  auto q = std::get<0>(out);
 
   // 選択アクションの確率
   auto policy = torch::amax(torch::softmax(q, 2), 2);
@@ -159,7 +164,7 @@ int Learner::inference(Request &request,
       torch::where(prob < epsThreshold, randomAction, torch::argmax(q, 2));
 
   auto ret = localBuffer.updateAndGetTransition(request, selectAction, q,
-                                                agentOutput, policy);
+                                                std::get<1>(out), policy);
 
   if (ret) {
     auto &retraceData = localBuffer.getRetraceData();
@@ -180,63 +185,101 @@ void Learner::trainLoop(int threadNum) {
   // std::string envent_file = "/home/yoshi/logs";
   // tensorflow::EventsWriter writer(envent_file);
 
-  auto &agent = gAgents[threadNum];
-  auto optimizer = new torch::optim::Adam(
+  Agent &agent = gAgents[threadNum];
+
+  auto optimizer = torch::optim::Adam(
       agent.onlineNet.parameters(),
       torch::optim::AdamOptions().lr(LEARNING_RATE).eps(EPSILON));
 
   auto &sampleData = gSamples[threadNum];
   auto &trainData = gTrainDatas[threadNum];
-  AgentInput &input = gAgentInputs[threadNum];
 
   std::deque<float> lossList;
 
+  if (threadNum == 0) {
+    initTotalGrad(agent.onlineNet.named_parameters(), device);
+  }
+
   while (1) {
     replay.sample(sampleData);
-    dataConverter.toBatchedTrainData(trainData, sampleData.dataList);
+    toBatchedTrainData(trainData, sampleData.dataList);
 
-    input.state = trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)});
-    input.prevAction =
-        trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)});
-    input.prevReward =
-        trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)});
-    input.ih = &trainData.ih;
-    input.hh = &trainData.hh;
+    // // モデルに設定するhidden stateをdetach
+    trainData.hiddenStates.detach_();
+    trainData.cellStates.detach_();
 
-    agent.onlineNet.forward(input);
-    agent.targetNet.forward(input);
+    // 計算グラフを切る
+    agent.onlineNet.detach_();
 
-    input.state =
-        trainData.state.index({Slice(), Slice(1 + REPLAY_PERIOD, None)});
-    input.prevAction =
-        trainData.action.index({Slice(), Slice(REPLAY_PERIOD, -1)});
-    input.prevReward =
-        trainData.reward.index({Slice(), Slice(REPLAY_PERIOD, -1)});
-    input.ih = nullptr;
-    input.hh = nullptr;
+    // Reset gradients.
+    optimizer.zero_grad();
 
-    auto onlineRet = agent.onlineNet.forward(input);
-    auto targetRet = agent.targetNet.forward(input);
+    auto burnInOnlineRet = agent.onlineNet.forward(
+        trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
+        trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+        trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+        LstmStates(trainData.hiddenStates, trainData.cellStates), device);
+    auto [onlineHiddenStates, onlineCellStates] = std::get<1>(burnInOnlineRet);
 
-    auto [lossValue, priorities] = retraceLoss(
-        trainData.action.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
+    auto burnInOnTargetRet = agent.targetNet.forward(
+        trainData.state.index({Slice(), Slice(1, 1 + REPLAY_PERIOD)}),
+        trainData.action.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+        trainData.reward.index({Slice(), Slice(0, REPLAY_PERIOD)}),
+        LstmStates(trainData.hiddenStates, trainData.cellStates), device);
+
+    // ここから勾配を使う
+    // backwardではここまでさかのぼる
+    onlineHiddenStates.requires_grad_(true);
+    onlineCellStates.requires_grad_(true);
+    agent.onlineNet.requiresGrad_(true);
+
+    auto onlineRet = agent.onlineNet.forward(
+        trainData.state.index({Slice(), Slice(REPLAY_PERIOD, None)}),
+        trainData.action.index({Slice(), Slice(REPLAY_PERIOD - 1, -1)}),
+        trainData.reward.index({Slice(), Slice(REPLAY_PERIOD - 1, -1)}),
+        LstmStates(onlineHiddenStates, onlineCellStates), device);
+
+    auto targetRet = agent.targetNet.forward(
+        trainData.state.index({Slice(), Slice(REPLAY_PERIOD, None)}),
+        trainData.action.index({Slice(), Slice(REPLAY_PERIOD - 1, -1)}),
+        trainData.reward.index({Slice(), Slice(REPLAY_PERIOD - 1, -1)}),
+        std::get<1>(burnInOnTargetRet), device);
+
+    auto [loss, priorities] = retraceLoss(
+        trainData.action.index({Slice(), Slice(REPLAY_PERIOD, None)})
             .unsqueeze(2),
-        trainData.reward.index({Slice(), Slice(1 + REPLAY_PERIOD, None)})
+        trainData.reward.index({Slice(), Slice(REPLAY_PERIOD, None)})
             .squeeze(-1),
-        trainData.done.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        trainData.policy.index({Slice(), Slice(1 + REPLAY_PERIOD, None)}),
-        std::move(onlineRet.q), std::move(targetRet.q), device, optimizer);
+        trainData.done.index({Slice(), Slice(REPLAY_PERIOD, None)}),
+        trainData.policy.index({Slice(), Slice(REPLAY_PERIOD, None)}),
+        std::get<0>(onlineRet), std::get<0>(targetRet), device, true);
+
+    // std::cout << "----------------------" << std::endl;
+    // for (auto &val : agent.onlineNet.named_parameters()) {
+    //   auto name = val.key();
+    //   if (val.value().grad().numel() > 0) {
+    //     std::cout << "1"
+    //               << ": " << name << ": "
+    //               << val.value().grad().reshape(-1).index({-1}) <<
+    // std::endl;
+    //   } else {
+    //     std::cout << "1"
+    //               << ": " << name << ": " << std::endl;
+    //   }
+    // }
 
     // 勾配を集計して設定
-    updateGrad(threadNum, agent.onlineNet);
+    updateGrad(agent.onlineNet, threadNum);
 
     // Update the parameters based on the calculated gradients.
-    optimizer->step();
-
-    agent.trainCount++;
+    optimizer.step();
 
     if (threadNum == 0) {
-      lossList.push_back(lossValue);
+      gTrainParams = agent.onlineNet.named_parameters(true);
+      gTrainBuffers = agent.onlineNet.named_buffers(true);
+      agent.trainCount++;
+
+      lossList.push_back(loss);
       if (lossList.size() > 100) {
         lossList.pop_front();
       }
@@ -271,7 +314,7 @@ void Learner::trainLoop(int threadNum) {
     if (threadNum == 0 && (stepsDone % 1000 == 0)) {
       agent.onlineNet.saveStateDict("model.pt");
     }
-    // std::cout << "stepsDone " << stepsDone << std::endl;
+    std::cout << "stepsDone " << stepsDone << std::endl;
   }
 }
 
@@ -281,8 +324,6 @@ int main(void) {
       torch::zeros({1, 84, 84}, torch::TensorOptions().dtype(torch::kUInt8));
   int actionSize = 9;
   int numEnvs = NUM_ENVS;
-  torch::Device device(torch::cuda::is_available() ? torch::kCUDA
-                                                   : torch::kCPU);
 
   // 訓練モデルのパラメーターを合わせる
   for (auto i = 1; i < NUM_TRAIN_THREADS; i++) {

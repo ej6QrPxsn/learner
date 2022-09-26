@@ -1,10 +1,10 @@
 #ifndef MODELS_HPP
 #define MODELS_HPP
 
+#include "StructuredData.hpp"
 #include <regex>
 #include <torch/torch.h>
 #include <type_traits>
-#include "StructuredData.hpp"
 
 struct Model : torch::nn::Module {
   void saveStateDict(const std::string &file_name) {
@@ -45,10 +45,9 @@ struct Model : torch::nn::Module {
     }
   }
 
-  void copyFrom(Model &fromModel) {
+  void copyParams(NamedParameters &newParams, NamedParameters &newBuffers) {
     torch::NoGradGuard no_grad;
 
-    auto newParams = fromModel.named_parameters(true /*recurse*/);
     auto params = this->named_parameters(true /*recurse*/);
     for (auto &val : newParams) {
       auto name = val.key();
@@ -58,7 +57,6 @@ struct Model : torch::nn::Module {
       }
     }
 
-    auto newBuffers = fromModel.named_buffers(true /*recurse*/);
     auto buffers = this->named_buffers(true /*recurse*/);
     for (auto &val : newBuffers) {
       auto name = val.key();
@@ -67,6 +65,12 @@ struct Model : torch::nn::Module {
         t->copy_(val.value());
       }
     }
+  }
+
+  void copyFrom(Model &fromModel) {
+    auto newParams = fromModel.named_parameters(true /*recurse*/);
+    auto newBuffers = fromModel.named_parameters(true /*recurse*/);
+    copyParams(newParams, newBuffers);
   }
 };
 
@@ -84,29 +88,77 @@ struct R2D2Agent : Model {
     conv3 = register_module(
         "conv3",
         torch::nn::Conv2d(torch::nn::Conv2dOptions(64, 64, 3).stride(1)));
-    lstm = register_module(
-        "lstm", torch::nn::LSTM(
-                    torch::nn::LSTMOptions((7 * 7 * 64) + 1 + n_actions, 512)
-                        .batch_first(true)));
-    adv1 = register_module("adv1", torch::nn::Linear(512, 512));
+
+    lstmCell = register_module(
+        "lstm",
+        torch::nn::LSTMCell((7 * 7 * 64) + 1 + n_actions, LSTM_STATE_SIZE));
+
+    adv1 = register_module("adv1", torch::nn::Linear(LSTM_STATE_SIZE, 512));
     adv2 = register_module("adv2", torch::nn::Linear(512, n_actions));
-    state1 = register_module("state1", torch::nn::Linear(512, 512));
+    state1 = register_module("state1", torch::nn::Linear(LSTM_STATE_SIZE, 512));
     state2 = register_module("state2", torch::nn::Linear(512, 1));
+    // fc1 = register_module("fc1", torch::nn::Linear((7 * 7 * 64) + 1 +
+    // n_actions,
+    //                                                LSTM_STATE_SIZE));
   }
 
-  AgentOutput forward(AgentInput &agentInput);
+  AgentOutput forward(const torch::Tensor x, const torch::Tensor prevAction,
+                      const torch::Tensor prevReward,
+                      const LstmStates lstmStates, const torch::Device device);
 
-private:
-  torch::Tensor forwardConv(torch::Tensor x);
-  torch::Tensor forwardLstm(torch::Tensor x, AgentInput &agentInput,
-                            AgentOutput *output);
-  torch::Tensor forwardDueling(torch::Tensor x);
+  void detach_() {
+    conv1->weight.detach_();
+    conv2->weight.detach_();
+    conv3->weight.detach_();
+    lstmCell->weight_hh.detach_();
+    lstmCell->weight_hh.detach_();
+    adv1->weight.detach_();
+    adv2->weight.detach_();
+    state1->weight.detach_();
+    state2->weight.detach_();
+    conv1->bias.detach_();
+    conv2->bias.detach_();
+    conv3->bias.detach_();
+    lstmCell->bias_ih.detach_();
+    lstmCell->bias_hh.detach_();
+    adv1->bias.detach_();
+    adv2->bias.detach_();
+    state1->bias.detach_();
+    state2->bias.detach_();
+  }
 
+  void requiresGrad_(bool grad) {
+    conv1->weight.requires_grad_(grad);
+    conv2->weight.requires_grad_(grad);
+    conv3->weight.requires_grad_(grad);
+
+    lstmCell->weight_hh.requires_grad_(grad);
+    lstmCell->weight_hh.requires_grad_(grad);
+
+    adv1->weight.requires_grad_(grad);
+    adv2->weight.requires_grad_(grad);
+    state1->weight.requires_grad_(grad);
+    state2->weight.requires_grad_(grad);
+
+    conv1->bias.requires_grad_(grad);
+    conv2->bias.requires_grad_(grad);
+    conv3->bias.requires_grad_(grad);
+
+    lstmCell->bias_ih.requires_grad_(grad);
+    lstmCell->bias_hh.requires_grad_(grad);
+    adv1->bias.requires_grad_(grad);
+    adv2->bias.requires_grad_(grad);
+    state1->bias.requires_grad_(grad);
+    state2->bias.requires_grad_(grad);
+  }
+
+  // private:
   int64_t nActions;
   torch::nn::Conv2d conv1{nullptr};
   torch::nn::Conv2d conv2{nullptr};
   torch::nn::Conv2d conv3{nullptr};
-  torch::nn::LSTM lstm{nullptr};
+  // torch::nn::Linear fc1{nullptr};
+  torch::nn::LSTMCell lstmCell{nullptr};
   torch::nn::Linear adv1{nullptr};
   torch::nn::Linear adv2{nullptr};
   torch::nn::Linear state1{nullptr};

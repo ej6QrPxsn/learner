@@ -28,9 +28,9 @@ const auto HIGH_REWARD_RATIO = 1. / 256.;
 const auto REPLAY = 1;
 const auto HIGH_REWARD = 2;
 
-const auto ACTION_SIZE = 9;
+const auto ACTION_SIZE = 4;
 const auto NUM_ENVS = 16;
-const auto NUM_TRAIN_THREADS = 5;
+const auto NUM_TRAIN_THREADS = 4;
 
 const auto STATE_SIZE = 84 * 84;
 const auto LSTM_STATE_SIZE = 512;
